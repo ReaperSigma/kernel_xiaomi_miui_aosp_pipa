@@ -34,6 +34,7 @@
 #elif defined(CONFIG_X86_64) || defined(CONFIG_ARM64)
 #define LZO_USE_CTZ64	1
 #define LZO_USE_CTZ32	1
+#define LZO_FAST_64BIT_MEMORY_ACCESS
 #elif defined(CONFIG_X86) || defined(CONFIG_PPC)
 #define LZO_USE_CTZ32	1
 #elif defined(CONFIG_ARM) && (__LINUX_ARM_ARCH__ >= 5)
@@ -43,8 +44,7 @@
 #define M1_MAX_OFFSET	0x0400
 #define M2_MAX_OFFSET	0x0800
 #define M3_MAX_OFFSET	0x4000
-#define M4_MAX_OFFSET_V0	0xbfff
-#define M4_MAX_OFFSET_V1	0xbffe
+#define M4_MAX_OFFSET	0xbffe
 
 #define M1_MIN_LEN	2
 #define M1_MAX_LEN	2
