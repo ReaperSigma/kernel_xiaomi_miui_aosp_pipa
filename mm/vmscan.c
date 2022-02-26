@@ -3739,6 +3739,7 @@ static void inc_max_seq(struct lruvec *lruvec)
 	for (type = 0; type < ANON_AND_FILE; type++)
 		reset_ctrl_pos(lruvec, type, false);
 
+	WRITE_ONCE(lrugen->timestamps[next], jiffies);
 	/* make sure preceding modifications appear */
 	smp_store_release(&lrugen->max_seq, lrugen->max_seq + 1);
 
@@ -3864,7 +3865,8 @@ static long get_nr_evictable(struct lruvec *lruvec, unsigned long max_seq,
 	return total > 0 ? total : 0;
 }
 
-static void age_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+static bool age_lruvec(struct lruvec *lruvec, struct scan_control *sc,
+		       unsigned long min_ttl)
 {
 	bool need_aging;
 	long nr_to_scan;
@@ -3874,12 +3876,20 @@ static void age_lruvec(struct lruvec *lruvec, struct scan_control *sc)
 	DEFINE_MAX_SEQ(lruvec);
 	DEFINE_MIN_SEQ(lruvec);
 
+	if (min_ttl) {
+		int gen = lru_gen_from_seq(min_seq[LRU_GEN_FILE]);
+		unsigned long birth = READ_ONCE(lruvec->lrugen.timestamps[gen]);
+
+		if (time_is_after_jiffies(birth + min_ttl))
+			return false;
+	}
+
 	if (prot == MEMCG_PROT_MIN)
-		return;
+		return false;
 
 	nr_to_scan = get_nr_evictable(lruvec, max_seq, min_seq, swappiness, &need_aging);
 	if (!nr_to_scan)
-		return;
+		return false;
 
 	nr_to_scan >>= sc->priority;
 
@@ -3888,11 +3898,18 @@ static void age_lruvec(struct lruvec *lruvec, struct scan_control *sc)
 
 	if (nr_to_scan && need_aging && (prot != MEMCG_PROT_LOW || sc->memcg_low_reclaim))
 		try_to_inc_max_seq(lruvec, max_seq, sc, swappiness, false);
+
+	return true;
 }
+
+/* to protect the working set of the last N jiffies */
+static unsigned long lru_gen_min_ttl __read_mostly;
 
 static void lru_gen_age_node(struct pglist_data *pgdat, struct scan_control *sc)
 {
 	struct mem_cgroup *memcg;
+	bool success = false;
+	unsigned long min_ttl = READ_ONCE(lru_gen_min_ttl);
 
 	VM_BUG_ON(!current_is_kswapd());
 
@@ -3918,12 +3935,29 @@ static void lru_gen_age_node(struct pglist_data *pgdat, struct scan_control *sc)
 	do {
 		struct lruvec *lruvec = mem_cgroup_lruvec(pgdat, memcg);
 
-		age_lruvec(lruvec, sc);
+		if (age_lruvec(lruvec, sc, min_ttl))
+			success = true;
 
 		cond_resched();
 	} while ((memcg = mem_cgroup_iter(NULL, memcg, NULL)));
 
 	current->reclaim_state->mm_walk = NULL;
+
+	/*
+	 * The main goal is to OOM kill if every generation from all memcgs is
+	 * younger than min_ttl. However, another theoretical possibility is all
+	 * memcgs are either below min or empty.
+	 */
+	if (!success && mutex_trylock(&oom_lock)) {
+		struct oom_control oc = {
+			.gfp_mask = sc->gfp_mask,
+			.order = sc->order,
+		};
+
+		out_of_memory(&oc);
+
+		mutex_unlock(&oom_lock);
+	}
 }
 
 /*
@@ -4473,15 +4507,259 @@ static void lru_gen_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc
 }
 
 /******************************************************************************
+ *                          state change
+ ******************************************************************************/
+
+static bool __maybe_unused state_is_valid(struct lruvec *lruvec)
+{
+	struct lru_gen_struct *lrugen = &lruvec->lrugen;
+
+	if (lrugen->enabled) {
+		enum lru_list lru;
+
+		for_each_evictable_lru(lru) {
+			if (!list_empty(&lruvec->lists[lru]))
+				return false;
+		}
+	} else {
+		int gen, type, zone;
+
+		for_each_gen_type_zone(gen, type, zone) {
+			if (!list_empty(&lrugen->lists[gen][type][zone]))
+				return false;
+
+			/* unlikely but not a bug when reset_batch_size() is pending */
+			VM_WARN_ON(lrugen->nr_pages[gen][type][zone]);
+		}
+	}
+
+	return true;
+}
+
+static bool fill_evictable(struct lruvec *lruvec)
+{
+	enum lru_list lru;
+	int remaining = MAX_LRU_BATCH;
+
+	for_each_evictable_lru(lru) {
+		int type = is_file_lru(lru);
+		bool active = is_active_lru(lru);
+		struct list_head *head = &lruvec->lists[lru];
+
+		while (!list_empty(head)) {
+			bool success;
+			struct page *page = lru_to_page(head);
+
+			VM_BUG_ON_PAGE(PageTail(page), page);
+			VM_BUG_ON_PAGE(PageUnevictable(page), page);
+			VM_BUG_ON_PAGE(PageActive(page) != active, page);
+			VM_BUG_ON_PAGE(page_is_file_cache(page) != type, page);
+			VM_BUG_ON_PAGE(page_lru_gen(page) < MAX_NR_GENS, page);
+
+			prefetchw_prev_lru_page(page, head, flags);
+
+			del_page_from_lru_list(page, lruvec);
+			success = lru_gen_add_page(lruvec, page, false);
+			VM_BUG_ON(!success);
+
+			if (!--remaining)
+				return false;
+		}
+	}
+
+	return true;
+}
+
+static bool drain_evictable(struct lruvec *lruvec)
+{
+	int gen, type, zone;
+	int remaining = MAX_LRU_BATCH;
+
+	for_each_gen_type_zone(gen, type, zone) {
+		struct list_head *head = &lruvec->lrugen.lists[gen][type][zone];
+
+		while (!list_empty(head)) {
+			bool success;
+			struct page *page = lru_to_page(head);
+
+			VM_BUG_ON_PAGE(PageTail(page), page);
+			VM_BUG_ON_PAGE(PageUnevictable(page), page);
+			VM_BUG_ON_PAGE(PageActive(page), page);
+			VM_BUG_ON_PAGE(page_is_file_cache(page) != type, page);
+			VM_BUG_ON_PAGE(page_zonenum(page) != zone, page);
+
+			prefetchw_prev_lru_page(page, head, flags);
+
+			success = lru_gen_del_page(lruvec, page, false);
+			VM_BUG_ON(!success);
+			add_page_to_lru_list(page, lruvec);
+
+			if (!--remaining)
+				return false;
+		}
+	}
+
+	return true;
+}
+
+static void lru_gen_change_state(bool enable)
+{
+	static DEFINE_MUTEX(state_mutex);
+
+	struct mem_cgroup *memcg;
+
+	cgroup_lock();
+	cpus_read_lock();
+	get_online_mems();
+	mutex_lock(&state_mutex);
+
+	if (enable == lru_gen_enabled())
+		goto unlock;
+
+	if (enable)
+		static_branch_enable_cpuslocked(&lru_gen_caps[LRU_GEN_CORE]);
+	else
+		static_branch_disable_cpuslocked(&lru_gen_caps[LRU_GEN_CORE]);
+
+	memcg = mem_cgroup_iter(NULL, NULL, NULL);
+	do {
+		int nid;
+
+		for_each_node(nid) {
+			struct pglist_data *pgdat = NODE_DATA(nid);
+			struct lruvec *lruvec = get_lruvec(memcg, nid);
+
+			if (!lruvec)
+				continue;
+
+			if (!pgdat) {
+				lruvec->lrugen.enabled = enable;
+				continue;
+			}
+
+			spin_lock_irq(&pgdat->lru_lock);
+
+			VM_BUG_ON(!seq_is_valid(lruvec));
+			VM_BUG_ON(!state_is_valid(lruvec));
+
+			lruvec->lrugen.enabled = enable;
+
+			while (!(enable ? fill_evictable(lruvec) : drain_evictable(lruvec))) {
+				spin_unlock_irq(&pgdat->lru_lock);
+				cond_resched();
+				spin_lock_irq(&pgdat->lru_lock);
+			}
+
+			spin_unlock_irq(&pgdat->lru_lock);
+		}
+
+		cond_resched();
+	} while ((memcg = mem_cgroup_iter(NULL, memcg, NULL)));
+unlock:
+	mutex_unlock(&state_mutex);
+	put_online_mems();
+	cpus_read_unlock();
+	cgroup_unlock();
+}
+
+/******************************************************************************
+ *                          sysfs interface
+ ******************************************************************************/
+
+static ssize_t show_min_ttl(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%u\n", jiffies_to_msecs(READ_ONCE(lru_gen_min_ttl)));
+}
+
+static ssize_t store_min_ttl(struct kobject *kobj, struct kobj_attribute *attr,
+			     const char *buf, size_t len)
+{
+	unsigned int msecs;
+
+	if (kstrtouint(buf, 0, &msecs))
+		return -EINVAL;
+
+	WRITE_ONCE(lru_gen_min_ttl, msecs_to_jiffies(msecs));
+
+	return len;
+}
+
+static struct kobj_attribute lru_gen_min_ttl_attr = __ATTR(
+	min_ttl_ms, 0644, show_min_ttl, store_min_ttl
+);
+
+static ssize_t show_enable(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	unsigned int caps = 0;
+
+	if (get_cap(LRU_GEN_CORE))
+		caps |= BIT(LRU_GEN_CORE);
+
+	if (arch_has_hw_pte_young() && get_cap(LRU_GEN_MM_WALK))
+		caps |= BIT(LRU_GEN_MM_WALK);
+
+	if (IS_ENABLED(CONFIG_ARCH_HAS_NONLEAF_PMD_YOUNG) && get_cap(LRU_GEN_NONLEAF_YOUNG))
+		caps |= BIT(LRU_GEN_NONLEAF_YOUNG);
+
+	return snprintf(buf, PAGE_SIZE, "0x%04x\n", caps);
+}
+
+static ssize_t store_enable(struct kobject *kobj, struct kobj_attribute *attr,
+			    const char *buf, size_t len)
+{
+	int i;
+	unsigned int caps;
+
+	if (tolower(*buf) == 'n')
+		caps = 0;
+	else if (tolower(*buf) == 'y')
+		caps = -1;
+	else if (kstrtouint(buf, 0, &caps))
+		return -EINVAL;
+
+	for (i = 0; i < NR_LRU_GEN_CAPS; i++) {
+		bool enable = caps & BIT(i);
+
+		if (i == LRU_GEN_CORE)
+			lru_gen_change_state(enable);
+		else if (enable)
+			static_branch_enable(&lru_gen_caps[i]);
+		else
+			static_branch_disable(&lru_gen_caps[i]);
+	}
+
+	return len;
+}
+
+static struct kobj_attribute lru_gen_enabled_attr = __ATTR(
+	enabled, 0644, show_enable, store_enable
+);
+
+static struct attribute *lru_gen_attrs[] = {
+	&lru_gen_min_ttl_attr.attr,
+	&lru_gen_enabled_attr.attr,
+	NULL
+};
+
+static struct attribute_group lru_gen_attr_group = {
+	.name = "lru_gen",
+	.attrs = lru_gen_attrs,
+};
+
+/******************************************************************************
  *                          initialization
  ******************************************************************************/
 
 void lru_gen_init_lruvec(struct lruvec *lruvec)
 {
+	int i;
 	int gen, type, zone;
 	struct lru_gen_struct *lrugen = &lruvec->lrugen;
 
 	lrugen->max_seq = MIN_NR_GENS + 1;
+
+	for (i = 0; i <= MIN_NR_GENS + 1; i++)
+		lrugen->timestamps[i] = jiffies;
 
 	for_each_gen_type_zone(gen, type, zone)
 		INIT_LIST_HEAD(&lrugen->lists[gen][type][zone]);
