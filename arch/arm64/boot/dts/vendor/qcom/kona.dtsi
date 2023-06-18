@@ -469,19 +469,19 @@
 			reg = <0x0 0x88c00000 0x0 0x2f00000>;
 		};
 
-		pil_adsp_mem: pil_adsp_region {
+		pil_adsp_mem: pil_adsp_region@8bb00000 {
 			compatible = "removed-dma-pool";
 			no-map;
 			reg = <0x0 0x8bb00000 0x0 0x2500000>;
 		};
 
-		pil_spss_mem: pil_spss_region {
+		pil_spss_mem: pil_spss_region@8e000000 {
 			compatible = "removed-dma-pool";
 			no-map;
 			reg = <0x0 0x8e000000 0x0 0x100000>;
 		};
 
-		cdsp_secure_heap: cdsp_secure_heap {
+		cdsp_secure_heap: cdsp_secure_heap@8e100000 {
 			compatible = "removed-dma-pool";
 			no-map;
 			reg = <0x0 0x8e100000 0x0 0x4600000>;
@@ -2602,6 +2602,7 @@
 		reg = <0x177004 0x4>;
 		regulator-name = "ufs_phy_gdsc";
 		qcom,retain-regs;
+		qcom,gds-timeout = <500>;
 	};
 
 	usb30_prim_gdsc: qcom,gdsc@10f004 {
