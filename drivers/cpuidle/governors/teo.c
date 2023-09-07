@@ -139,7 +139,7 @@
 #include <linux/sched/clock.h>
 #include <linux/sched/topology.h>
 #include <linux/tick.h>
-
+#include <../../../kernel/sched/sched.h>
 /*
  * The number of bits to shift the cpu's capacity by in order to determine
  * the utilized threshold.
