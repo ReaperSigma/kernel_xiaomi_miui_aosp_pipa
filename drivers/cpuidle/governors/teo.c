@@ -209,7 +209,7 @@ static DEFINE_PER_CPU(struct teo_cpu, teo_cpus);
  */
 static void teo_get_util(struct cpuidle_device *dev, struct teo_cpu *cpu_data)
 {
-	cpu_data->utilized = sched_cpu_util(dev->cpu) > cpu_data->util_threshold;
+	cpu_data->utilized =  cpu_util(dev->cpu) > cpu_data->util_threshold;
 }
 
 /**
@@ -591,7 +591,7 @@ static int teo_enable_device(struct cpuidle_driver *drv,
 			     struct cpuidle_device *dev)
 {
 	struct teo_cpu *cpu_data = per_cpu_ptr(&teo_cpus, dev->cpu);
-	unsigned long max_capacity = arch_scale_cpu_capacity(dev->cpu);
+	unsigned long max_capacity = arch_scale_cpu_capacity(NULL,dev->cpu);
 	int i;
 
 	memset(cpu_data, 0, sizeof(*cpu_data));
