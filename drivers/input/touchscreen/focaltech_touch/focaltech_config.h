@@ -3,7 +3,6 @@
  * FocalTech TouchScreen driver.
  *
  * Copyright (c) 2010-2017, FocalTech Systems, Ltd., all rights reserved.
- * Copyright (C) 2021 XiaoMi, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -106,7 +105,7 @@
  * show debug log info
  * enable it for debug, disable it for release
  */
-#define FTS_DEBUG_EN                            0
+#define FTS_DEBUG_EN                            1
 
 /*
  * Linux MultiTouch Protocol
@@ -130,7 +129,7 @@
  * Production test enable
  * 1: enable, 0:disable(default)
  */
-#define FTS_TEST_EN                             0
+#define FTS_TEST_EN                             1
 
 /*
  * Glove mode enable

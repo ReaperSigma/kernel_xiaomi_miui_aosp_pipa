@@ -3,7 +3,6 @@
  * FocalTech fts TouchScreen driver.
  *
  * Copyright (c) 2010-2017, Focaltech Ltd. All rights reserved.
- * Copyright (C) 2021 XiaoMi, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -156,10 +155,14 @@ struct ts_ic_info {
 /*****************************************************************************
 * DEBUG function define here
 *****************************************************************************/
-static unsigned int XIAOMI_TP_DEBUG_EN = 0;
+static unsigned int XIAOMI_TP_DEBUG_EN;
 #define TPD_DEVICE "focal_3518"
 
-#define XIAOMI_TP_DEBUG(a, arg...) ((void)0)
+#define XIAOMI_TP_DEBUG(a, arg...)\
+	do {\
+		if (XIAOMI_TP_DEBUG_EN == 1)\
+		pr_err (TPD_DEVICE ": " a, ##arg);\
+	} while (0)
 
 #if FTS_DEBUG_EN
 #define FTS_DEBUG_LEVEL     1
@@ -172,12 +175,12 @@ static unsigned int XIAOMI_TP_DEBUG_EN = 0;
 #define FTS_FUNC_ENTER() printk("[FTS]%s: Enter\n", __func__)
 #define FTS_FUNC_EXIT()  printk("[FTS]%s: Exit(%d)\n", __func__, __LINE__)
 #else /* #if FTS_DEBUG_EN */
-#define FTS_DEBUG(fmt, args...) ((void)0)
-#define FTS_INFO(fmt, args...) ((void)0)
-#define FTS_ERROR(fmt, args...) ((void)0)
+#define FTS_DEBUG(fmt, args...)
 #define FTS_FUNC_ENTER()
 #define FTS_FUNC_EXIT()
 #endif
 
+#define FTS_INFO(fmt, args...) printk(KERN_ERR "[FTS][Info]"fmt"\n", ##args)
+#define FTS_ERROR(fmt, args...) printk(KERN_ERR "[FTS][Error]"fmt"\n", ##args)
 
 #endif /* __LINUX_FOCALTECH_COMMON_H__ */

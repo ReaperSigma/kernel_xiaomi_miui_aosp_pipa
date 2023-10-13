@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2010 - 2018 Novatek, Inc.
- * Copyright (C) 2021 XiaoMi, Inc.
  *
  * $Revision: 71886 $
  * $Date: 2020-11-10 15:36:01 +0800 (週二, 10 十一月 2020) $

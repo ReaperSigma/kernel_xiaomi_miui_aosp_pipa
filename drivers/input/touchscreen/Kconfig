@@ -11,8 +11,6 @@ menuconfig INPUT_TOUCHSCREEN
 
 if INPUT_TOUCHSCREEN
 
-source "drivers/input/touchscreen/nt36523/Kconfig"
-
 config TOUCHSCREEN_PROPERTIES
 	def_tristate INPUT
 	depends on INPUT
@@ -1316,22 +1314,13 @@ config TOUCHSCREEN_ROHM_BU21023
 config TOUCHSCREEN_ST
 	tristate "STMicroelectronics Touchscreen Driver"
 	depends on I2C
-	default n
+	default y
 	help
 	  Say Y here if you have a STMicroelectronics Touchscreen.
 
 	  If unsure, say N.
 	  To compile this driver as a module, choose M here: the
 	  module will be called st.
-
-config SECURE_TOUCH
-	bool "Secure Touch support for Xiaomi Touchscreen"
-	help
-          Say Y here
-	  -Goodix touch driver is connected
-	  -To enable secure touch for Goodix touch driver
-
-	  If unsure, say N.
 
 source "drivers/input/touchscreen/st/Kconfig"
 
@@ -1361,9 +1350,14 @@ config TOUCHSCREEN_SYNAPTICS_TCM
 	  To compile this driver as a module, choose M here: the
 	  module will be called synaptics_tcm.
 
-source "drivers/input/touchscreen/synaptics_tcm/Kconfig"
+config SECURE_TOUCH
+	bool "Secure Touch support for Xiaomi Touchscreen"
+	help
+          Say Y here
+	  -Goodix touch driver is connected
+	  -To enable secure touch for Goodix touch driver
 
-source "drivers/input/touchscreen/focaltech_touch/Kconfig"
+	  If unsure, say N.
 
 config INPUT_PRESS_NDT
 	bool "ndt"
@@ -1371,17 +1365,33 @@ config INPUT_PRESS_NDT
 	help
 	  Say Y here if you have a press ic ndt.
 
+source "drivers/input/touchscreen/synaptics_tcm/Kconfig"
+
+source "drivers/input/touchscreen/focaltech_touch/Kconfig"
+
 source "drivers/input/touchscreen/nt36xxx/Kconfig"
-
-source "drivers/input/touchscreen/focaltech_spi/Kconfig"
-
-source "drivers/input/touchscreen/fts_521/Kconfig"
 
 source "drivers/input/touchscreen/goodix_driver_gt9886/Kconfig"
 
 source "drivers/input/touchscreen/nt36672c/Kconfig"
 
+source "drivers/input/touchscreen/nt36523/Kconfig"
+
+source "drivers/input/touchscreen/nt36532/Kconfig"
+
+source "drivers/input/touchscreen/fts_521/Kconfig"
+
+source "drivers/input/touchscreen/fts_spi/Kconfig"
+
+source "drivers/input/touchscreen/focaltech_spi/Kconfig"
+
 source "drivers/input/touchscreen/xiaomi/Kconfig"
+
+source "drivers/input/touchscreen/focaltech_3658u/Kconfig"
+
+source "drivers/input/touchscreen/goodix_9916/Kconfig"
+
+source "drivers/input/touchscreen/hxchipset/Kconfig"
 
 config TOUCHSCREEN_COMMON
 	bool "Common touchscreen interface to interact with userspace"

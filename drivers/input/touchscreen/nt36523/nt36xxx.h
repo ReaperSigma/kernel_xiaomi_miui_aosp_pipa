@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2010 - 2018 Novatek, Inc.
- * Copyright (C) 2021 XiaoMi, Inc.
  *
  * $Revision: 69262 $
  * $Date: 2020-09-23 15:07:14 +0800 (週三, 23 九月 2020) $
@@ -104,8 +103,8 @@ extern const uint16_t touch_key_array[TOUCH_KEY_NUM];
 extern const uint16_t gesture_key_array[];
 #endif
 #define BOOT_UPDATE_FIRMWARE 1
-#define DEFAULT_BOOT_UPDATE_FIRMWARE_NAME "novatek_ts_fw.bin"
-#define DEFAULT_MP_UPDATE_FIRMWARE_NAME   "novatek_ts_mp.bin"
+#define DEFAULT_BOOT_UPDATE_FIRMWARE_NAME "novatek_ts_fw_k81.bin"
+#define DEFAULT_MP_UPDATE_FIRMWARE_NAME   "novatek_ts_mp_k81.bin"
 #define DEFAULT_DEBUG_FW_NAME "novatek_debug_fw.bin"
 #define DEFAULT_DEBUG_MP_NAME "novatek_debug_mp.bin"
 #define POINT_DATA_CHECKSUM 1

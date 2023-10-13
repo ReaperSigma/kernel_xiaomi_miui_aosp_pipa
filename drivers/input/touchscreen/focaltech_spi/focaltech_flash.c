@@ -3,7 +3,6 @@
  * FocalTech fts TouchScreen driver.
  *
  * Copyright (c) 2012-2020, Focaltech Ltd. All rights reserved.
- * Copyright (C) 2021 XiaoMi, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -1640,7 +1639,9 @@ static bool fts_fwupg_need_upgrade(struct fts_upgrade *upg)
 		}
 
 		FTS_INFO("fw version in tp:%x, host:%x", fw_ver_in_tp, fw_ver_in_host);
-		return true;
+		if (fw_ver_in_tp != fw_ver_in_host) {
+			return true;
+		}
 	} else {
 		FTS_INFO("fw invalid, need upgrade fw");
 		return true;

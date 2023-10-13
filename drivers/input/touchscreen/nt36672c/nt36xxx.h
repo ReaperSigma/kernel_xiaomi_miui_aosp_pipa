@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2010 - 2018 Novatek, Inc.
- * Copyright (C) 2021 XiaoMi, Inc.
  *
  * $Revision: 32206 $
  * $Date: 2018-08-10 19:23:04 +0800 (週五, 10 八月 2018) $
@@ -57,7 +56,9 @@
 #define PINCTRL_STATE_RELEASE		"pmx_ts_release"
 #define MI_DRM_NOTIFIER
 
-#define NVT_DEBUG 0
+#define NVT_DEBUG 1
+#define TOUCH_DISABLE_LPM 1
+#define TOUCH_IRQ_BOOST 2
 
 /*---GPIO number---*/
 #define NVTTOUCH_RST_PIN 980
@@ -73,8 +74,12 @@
 /*---SPI driver info.---*/
 #define NVT_SPI_NAME "NVT-ts-spi"
 
-#define NVT_LOG(fmt, args...) ((void)0)
-#define NVT_ERR(fmt, args...) ((void)0)
+#if NVT_DEBUG
+#define NVT_LOG(fmt, args...)    pr_err("[%s] %s %d: " fmt, NVT_SPI_NAME, __func__, __LINE__, ##args)
+#else
+#define NVT_LOG(fmt, args...)    pr_info("[%s] %s %d: " fmt, NVT_SPI_NAME, __func__, __LINE__, ##args)
+#endif
+#define NVT_ERR(fmt, args...)    pr_err("[%s] %s %d: " fmt, NVT_SPI_NAME, __func__, __LINE__, ##args)
 
 /*---Input device info.---*/
 #define NVT_TS_NAME "NVTCapacitiveTouchScreen"
