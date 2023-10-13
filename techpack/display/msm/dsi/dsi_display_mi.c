@@ -46,9 +46,10 @@ static bool wp_info_cmdline_flag = 0;
 static int __init
 oled_pmic_id_setup (char *str)
 {
-	size_t count = ((strlen(str) > sizeof(oled_pmic_id_str)) ?
-					sizeof(oled_pmic_id_str): strlen(str));
+	size_t count = ((strlen(str) >= sizeof(oled_pmic_id_str)) ?
+					sizeof(oled_pmic_id_str) - 1 : strlen(str));
 	strncpy(oled_pmic_id_str, str, count);
+
 	return 1;
 }
 __setup("androidboot.oled_pmic_id=", oled_pmic_id_setup);
@@ -57,8 +58,8 @@ __setup("androidboot.oled_pmic_id=", oled_pmic_id_setup);
 static int __init
 oled_wp_info_setup (char *str)
 {
-	size_t count = ((strlen(str) > sizeof(oled_wp_info_str)) ?
-					sizeof(oled_wp_info_str): strlen(str));
+	size_t count = ((strlen(str) >= sizeof(oled_wp_info_str)) ?
+					sizeof(oled_wp_info_str) - 1 : strlen(str));
 	strncpy(oled_wp_info_str, str, count);
 	pr_info("androidboot.oled_wp=%s\n", oled_wp_info_str);
 	wp_info_cmdline_flag = 1;

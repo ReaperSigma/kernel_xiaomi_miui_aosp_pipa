@@ -286,7 +286,7 @@ static int adm_get_copp_id(int port_idx, int copp_idx)
 
 static int adm_get_idx_if_copp_exists(int port_idx, int topology, int mode,
 				 int rate, int bit_width, int app_type,
-				 int session_type)
+				 int session_type, int channel_mode)
 {
 	int idx;
 
@@ -304,7 +304,9 @@ static int adm_get_idx_if_copp_exists(int port_idx, int topology, int mode,
 			atomic_read(
 				&this_adm.copp.session_type[port_idx][idx])) &&
 		    (app_type ==
-			atomic_read(&this_adm.copp.app_type[port_idx][idx])))
+			atomic_read(&this_adm.copp.app_type[port_idx][idx])) &&
+		    (channel_mode ==
+			atomic_read(&this_adm.copp.channels[port_idx][idx])))
 			return idx;
 	return -EINVAL;
 }
@@ -878,7 +880,7 @@ int crus_adm_set_params(int port_id, int copp_idx, uint32_t module_id,
 			 uint32_t params_length)
 {
 	struct param_hdr_v3 param_hdr;
-	int port_idx;
+	int port_idx = 0;
 	int rc  = 0;
 
 	pr_info("[CSPL] %s: config: port_idx %d copp_idx  %d module 0x%d, len=%d\n",
@@ -1850,7 +1852,6 @@ static int32_t adm_callback(struct apr_client_data *data, void *priv)
 				pr_debug("%s: enable usb port\n", __func__);
 				is_usb_timeout = false;
 			}
-
 			wake_up(&this_adm.copp.wait[port_idx][copp_idx]);
 			}
 			break;
@@ -2528,8 +2529,6 @@ int adm_connect_afe_port(int mode, int session_id, int port_id)
 	if (!ret) {
 		pr_err("%s: ADM connect timedout for port_id: 0x%x\n",
 			__func__, port_id);
-		if (AFE_PORT_ID_USB_RX == port_id)
-			is_usb_timeout = true;
 		ret = -EINVAL;
 		goto fail_cmd;
 	} else if (atomic_read(&this_adm.copp.stat
@@ -3132,10 +3131,9 @@ int adm_open(int port_id, int path, int rate, int channel_mode, int topology,
 	int param_size;
 	int num_ec_ref_rx_chans = this_adm.num_ec_ref_rx_chans;
 
-	pr_err("%s:port %#x path:%d rate:%d channel_mode:%d perf_mode:%d topology 0x%x bit_width %d \
-		app_type %d acdb_id %d session_type %d passthr_mode %d \n",
-			__func__, port_id, path, rate, channel_mode, perf_mode,
-				topology, bit_width, app_type, acdb_id, session_type, passthr_mode);
+	pr_debug("%s:port %#x path:%d rate:%d mode:%d perf_mode:%d,topo_id %d\n",
+		 __func__, port_id, path, rate, channel_mode, perf_mode,
+		 topology);
 
 	port_id = q6audio_convert_virtual_to_portid(port_id);
 	port_idx = adm_validate_and_get_port_index(port_id);
@@ -3213,10 +3211,9 @@ int adm_open(int port_id, int path, int rate, int channel_mode, int topology,
 	}
 
 	if (topology == VPM_TX_VOICE_SMECNS_V2_COPP_TOPOLOGY ||
-	        topology == VPM_TX_VOICE_FLUENCE_SM_COPP_TOPOLOGY ||
+	    topology == VPM_TX_VOICE_FLUENCE_SM_COPP_TOPOLOGY ||
 		topology == ADM_TOPOLOGY_ID_AUDIO_RX_FVSAM ||
 		topology == ADM_TOPOLOGY_ID_AUDIO_RX_MISE) {
-		pr_debug("%s: set channel_mode as 1 for topology=%d\n", __func__, topology);
 		channel_mode = 1;
 	}
 
@@ -3229,7 +3226,8 @@ int adm_open(int port_id, int path, int rate, int channel_mode, int topology,
 		copp_idx = adm_get_idx_if_copp_exists(port_idx, topology,
 						      perf_mode,
 						      rate, bit_width,
-						      app_type, session_type);
+						      app_type, session_type,
+						      channel_mode);
 
 	if (copp_idx < 0) {
 		copp_idx = adm_get_next_available_copp(port_idx);
@@ -3938,7 +3936,7 @@ int adm_close(int port_id, int perf_mode, int copp_idx)
 	int usb_copp_idx = 0;
 	struct apr_hdr usb_close;
 
-	pr_err("%s: port_id=0x%x perf_mode: %d copp_idx: %d\n", __func__,
+	pr_debug("%s: port_id=0x%x perf_mode: %d copp_idx: %d\n", __func__,
 		 port_id, perf_mode, copp_idx);
 
 	port_id = q6audio_convert_virtual_to_portid(port_id);

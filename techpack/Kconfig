@@ -1,2 +1,5 @@
-source techpack/data/drivers/rmnet/perf/Kconfig
-source techpack/data/drivers/rmnet/shs/Kconfig
+menu "Tech packages"
+
+source "techpack/data/Kconfig"
+
+endmenu

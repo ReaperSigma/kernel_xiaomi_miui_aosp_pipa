@@ -259,8 +259,7 @@ struct sde_crtc_misr_info {
  * @frame_pending : Whether or not an update is pending
  * @frame_events  : static allocation of in-flight frame events
  * @frame_event_list : available frame event list
- * @spin_lock     : spin lock for transaction status, etc...
- * @fevent_spin_lock     : spin lock for frame event
+ * @spin_lock     : spin lock for frame event, transaction status, etc...
  * @event_thread  : Pointer to event handler thread
  * @event_worker  : Event worker queue
  * @event_cache   : Local cache of event worker structures
@@ -278,6 +277,7 @@ struct sde_crtc_misr_info {
  * @plane_mask_old: keeps track of the planes used in the previous commit
  * @frame_trigger_mode: frame trigger mode
  * @cp_pu_feature_mask: mask indicating cp feature enable for partial update
+ * @cached_user_roi_list : Copy of user_roi_list from previous PU frame
  * @ltm_buffer_cnt  : number of ltm buffers
  * @ltm_buffers     : struct stores ltm buffer related data
  * @ltm_buf_free    : list of LTM buffers that are available
@@ -288,7 +288,6 @@ struct sde_crtc_misr_info {
  * @needs_hw_reset  : Initiate a hw ctl reset
  * @comp_ratio      : Compression ratio
  * @dspp_blob_info  : blob containing dspp hw capability information
- * @hist_irq_idx    : hist interrupt irq idx
  */
 struct sde_crtc {
 	struct drm_crtc base;
@@ -365,6 +364,7 @@ struct sde_crtc {
 	enum frame_trigger_mode_type frame_trigger_mode;
 
 	u32 cp_pu_feature_mask;
+	struct msm_roi_list cached_user_roi_list;
 
 	u32 ltm_buffer_cnt;
 	struct sde_ltm_buffer *ltm_buffers[LTM_BUFFER_SIZE];
@@ -378,6 +378,7 @@ struct sde_crtc {
 	int hist_irq_idx;
 
 	int comp_ratio;
+	uint32_t mi_dimlayer_type;
 
 	struct drm_property_blob *dspp_blob_info;
 };
@@ -444,8 +445,7 @@ struct sde_crtc_mi_state {
  * @lm_roi        : Current LM ROI, possibly sub-rectangle of mode.
  *                  Origin top left of CRTC.
  * @user_roi_list : List of user's requested ROIs as from set property
- * @cached_user_roi_list : Copy of user_roi_list from previous PU frame
- * @property_state: Local storage for msm_prop properties
+  * @property_state: Local storage for msm_prop properties
  * @property_values: Current crtc property values
  * @input_fence_timeout_ns : Cached input fence timeout, in ns
  * @num_dim_layers: Number of dim layers
@@ -457,7 +457,6 @@ struct sde_crtc_mi_state {
  * @scl3_lut_cfg: QSEED3 lut config
  * @new_perf: new performance state being requested
  * @secure_session: Indicates the type of secure session
- * @mi_state: Mi part of crtc state
  */
 struct sde_crtc_state {
 	struct drm_crtc_state base;
@@ -473,14 +472,13 @@ struct sde_crtc_state {
 	struct sde_rect crtc_roi;
 	struct sde_rect lm_bounds[CRTC_DUAL_MIXERS];
 	struct sde_rect lm_roi[CRTC_DUAL_MIXERS];
-	struct msm_roi_list user_roi_list, cached_user_roi_list;
+	struct msm_roi_list user_roi_list;
 
 	struct msm_property_state property_state;
 	struct msm_property_value property_values[CRTC_PROP_COUNT];
 	uint64_t input_fence_timeout_ns;
 	uint32_t num_dim_layers;
 	struct sde_hw_dim_layer dim_layer[SDE_MAX_DIM_LAYERS];
-	struct sde_hw_dim_layer *fod_dim_layer;
 	uint32_t num_ds;
 	uint32_t num_ds_enabled;
 	bool ds_dirty;
@@ -488,10 +486,9 @@ struct sde_crtc_state {
 	struct sde_hw_scaler3_lut_cfg scl3_lut_cfg;
 
 	struct sde_core_perf_params new_perf;
-	int secure_session;
-	/* Mi crtc state */
 	struct sde_crtc_mi_state mi_state;
 	uint32_t num_dim_layers_bank;
+	int secure_session;
 };
 
 enum sde_crtc_irq_state {

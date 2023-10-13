@@ -7,7 +7,7 @@ IO_MODULE := msm
 LINUXINCLUDE += \
              -I$(srctree)techpack/audio/include/dsp \
              -I$(srctree)techpack/audio/include/uapi \
-             -I$(srctree)techpack/audio/include
+             -I$(srctree)techpack/aduio/include
 
 obj-y += elliptic.o
 obj-y += elliptic_mixer_controls.o

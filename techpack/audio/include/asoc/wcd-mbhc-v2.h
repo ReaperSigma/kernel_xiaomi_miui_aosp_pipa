@@ -619,6 +619,7 @@ struct wcd_mbhc {
 	unsigned long intr_status;
 	bool is_hph_ocp_pending;
 	int usbc_mode;
+
 	struct wcd_mbhc_fn *mbhc_fn;
 	bool force_linein;
 	struct device_node *fsa_np;
