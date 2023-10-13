@@ -1,8 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-/*
- * Copyright (c) Xiaomi Technologies Co., Ltd. 2021. All rights reserved.
- */
-
 #ifndef __XIAOMI_KEYBOARD_H
 #define __XIAOMI_KEYBOARD_H
 
@@ -14,10 +9,8 @@
 #include <linux/power_supply.h>
 
 #define XIAOMI_KB_TAG "xiaomi-keyboard"
-#define MI_KB_INFO(fmt, args...) \
-	pr_info("[%s] %s %d: " fmt, XIAOMI_KB_TAG, __func__, __LINE__, ##args)
-#define MI_KB_ERR(fmt, args...) \
-	pr_err("[%s] %s %d: " fmt, XIAOMI_KB_TAG, __func__, __LINE__, ##args)
+#define MI_KB_INFO(fmt, args...)    pr_info("[%s] %s %d: " fmt, XIAOMI_KB_TAG, __func__, __LINE__, ##args)
+#define MI_KB_ERR(fmt, args...)    pr_err("[%s] %s %d: " fmt, XIAOMI_KB_TAG, __func__, __LINE__, ##args)
 
 struct xiaomi_keyboard_platdata {
 	u32 rst_gpio;
