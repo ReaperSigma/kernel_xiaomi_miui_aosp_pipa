@@ -181,10 +181,8 @@ int backlight_device_set_brightness(struct backlight_device *bd,
 		if (brightness > bd->props.max_brightness)
 			rc = -EINVAL;
 		else {
-			if ((!bd->use_count && brightness) ||
-					(bd->use_count && !brightness)) {
-				pr_info("%s: set brightness to %lu\n",
-					__func__, brightness);
+			if ((!bd->use_count && brightness) || (bd->use_count && !brightness)) {
+				pr_info("%s: set brightness to %lu\n", __func__, brightness);
 				if (!bd->use_count)
 					bd->use_count++;
 				else
@@ -215,6 +213,7 @@ static ssize_t brightness_store(struct device *dev,
 		return rc;
 
 	bd->usr_brightness_req = brightness;
+
 	rc = backlight_device_set_brightness(bd, brightness);
 
 	return rc ? rc : count;
@@ -319,7 +318,6 @@ static ssize_t brightness_clone_store(struct device *dev,
 
 	bd->props.brightness_clone_backup = brightness;
 	bd->props.brightness_clone = brightness;
-
 	envp[0] = "SOURCE=sysfs";
 	envp[1] = NULL;
 	kobject_uevent_env(&bd->dev.kobj, KOBJ_CHANGE, envp);
@@ -519,6 +517,42 @@ struct backlight_device *backlight_device_get_by_type(enum backlight_type type)
 	return found ? bd : NULL;
 }
 EXPORT_SYMBOL(backlight_device_get_by_type);
+
+struct backlight_device *backlight_device_get_by_type_a(enum backlight_type type)
+{
+	bool found = false;
+	struct backlight_device *bd;
+
+	mutex_lock(&backlight_dev_list_mutex);
+	list_for_each_entry(bd, &backlight_dev_list, entry) {
+		if (bd->props.type == type && !strcmp(bd->dev.kobj.name, "KTZ8866A")) {
+			found = true;
+			break;
+		}
+	}
+	mutex_unlock(&backlight_dev_list_mutex);
+
+	return found ? bd : NULL;
+}
+EXPORT_SYMBOL(backlight_device_get_by_type_a);
+
+struct backlight_device *backlight_device_get_by_type_b(enum backlight_type type)
+{
+	bool found = false;
+	struct backlight_device *bd;
+
+	mutex_lock(&backlight_dev_list_mutex);
+	list_for_each_entry(bd, &backlight_dev_list, entry) {
+		if (bd->props.type == type && !strcmp(bd->dev.kobj.name, "KTZ8866B")) {
+			found = true;
+			break;
+		}
+	}
+	mutex_unlock(&backlight_dev_list_mutex);
+
+	return found ? bd : NULL;
+}
+EXPORT_SYMBOL(backlight_device_get_by_type_b);
 
 /**
  * backlight_device_unregister - unregisters a backlight device object.
