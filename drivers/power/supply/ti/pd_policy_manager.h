@@ -69,10 +69,14 @@ enum pm_state {
 #define STEP_BMS_CHG_VOTER	"STEP_BMS_CHG_VOTER"
 #define BQ_TAPER_FCC_VOTER	"BQ_TAPER_FCC_VOTER"
 #define BQ_TAPER_CELL_HGIH_FCC_VOTER	"BQ_TAPER_CELL_HGIH_FCC_VOTER"
+#define NON_PPS_PD_FCC_VOTER "NON_PPS_PD_FCC_VOTER"
 
+/* defined for non_verified pps charger maxium fcc */
 #define NON_VERIFIED_PPS_FCC_MAX		4800
+/* defined min fcc threshold for start bq direct charging */
 #define START_DRIECT_CHARGE_FCC_MIN_THR			2000
 #define PDO_MAX_NUM			7
+/* product related */
 #define LOW_POWER_PPS_CURR_THR			2000
 #define XIAOMI_LOW_POWER_PPS_CURR_MAX			1500
 #define PPS_VOL_MAX			11000
@@ -88,6 +92,7 @@ enum pm_state {
 
 #define FCC_MAX_MA_FOR_MASTER_BQ			6000
 #define IBUS_THRESHOLD_MA_FOR_DUAL_BQ			2100
+#define IBUS_THRESHOLD_MA_FOR_DUAL_BQ_LN8000		2500
 #define IBUS_THR_MA_HYS_FOR_DUAL_BQ			200
 #define IBUS_THR_TO_CLOSE_SLAVE_COUNT_MAX			40
 
@@ -96,17 +101,25 @@ enum pm_state {
 /* jeita related */
 #define JEITA_WARM_THR			450
 #define JEITA_COOL_NOT_ALLOW_CP_THR			100
+#define JEITA_COOL_NOT_ALLOW_CP_THR_PIPA			50
+#define JEITA_COOL_NOT_ALLOW_CP_THR_DAGU         50	
 /*
  * add hysteresis for warm threshold to avoid flash
  * charge and normal charge switch frequently at
  * the warm threshold
  */
 #define JEITA_HYSTERESIS			20
+#define JEITA_HYSTERESIS_PIPA_48			21
+#define JEITA_HYSTERESIS_PIPA			2
+#define JEITA_HYSTERESIS_DAGU_48			21
+#define JEITA_HYSTERESIS_DAGU			2
 
 #define BQ_TAPER_HYS_MV			10
 #define NON_FFC_BQ_TAPER_HYS_MV			50
 
 #define BQ_TAPER_DECREASE_STEP_MA			200
+#define BQ_TAPER_DECREASE_STEP_MA_PIPA			300
+#define BQ_TAPER_DECREASE_STEP_MA_DAGU			300
 #define BQ_SOFT_TAPER_DECREASE_STEP_MA			100
 #define STEP_VFLOAT_INDEX_MAX			2
 
@@ -121,6 +134,9 @@ enum pm_state {
 #define HIGH_IBUS_LIMI_THR_MA			4000
 
 #define TAPER_DONE_FFC_MA			2400
+#define TAPER_DONE_FFC_MA_LN8000		2500
+#define TAPER_DONE_FFC_MA_LN8000_PIPA		2600
+#define TAPER_DONE_FFC_MA_LN8000_DAGU		2600
 #define TAPER_DONE_NORMAL_MA			2200
 
 #define VBAT_HIGH_FOR_FC_HYS_MV		100
@@ -131,6 +147,7 @@ enum pm_state {
 #define CRITICAL_LOW_IBUS_THR			300
 
 #define MAX_UNSUPPORT_PPS_CURRENT_MA			5500
+#define NON_PPS_PD_FCC_LIMIT			(3000 * 1000)
 
 enum {
 	POWER_SUPPLY_PPS_INACTIVE = 0,
@@ -191,8 +208,10 @@ struct cp_device {
 	int  vbus_volt;
 	int  ibat_curr;
 	int  ibus_curr;
-
+	int  bq_input_suspend;
+	int  bms_chip_ok;
 	int  bat_temp;
+	int  bms_batt_temp;
 	int  bus_temp;
 	int  die_temp;
 };
@@ -210,6 +229,7 @@ struct usbpd_pm {
 
 	int	pd_active;
 	bool	pps_supported;
+	bool	fc2_exit_flag;
 
 	int	request_voltage;
 	int	request_current;
@@ -227,6 +247,7 @@ struct usbpd_pm {
 	bool	adapter_omf;
 
 	struct delayed_work pm_work;
+	struct delayed_work fc2_exit_work;
 
 	struct notifier_block nb;
 
@@ -236,6 +257,7 @@ struct usbpd_pm {
 	spinlock_t psy_change_lock;
 
 	struct votable		*fcc_votable;
+	struct votable		*fv_votable;
 	struct power_supply *cp_psy;
 	struct power_supply *cp_sec_psy;
 	struct power_supply *sw_psy;
@@ -251,10 +273,11 @@ struct usbpd_pm {
 	int			non_ffc_bat_volt_max;
 	int			bus_curr_compensate;
 	int			therm_level_threshold;
+	int			pd_power_max;
 	bool		cp_sec_enable;
 	bool			use_qcom_gauge;
 	bool			chg_enable_k11a;
-	bool			chg_enable_miphone;
+	bool			chg_enable_k81;
 	/* jeita or thermal related */
 	bool			jeita_triggered;
 	bool			is_temp_out_fc2_range;
@@ -267,9 +290,11 @@ struct usbpd_pm {
 	int			cell_vol_high_threshold_mv;
 	int			cell_vol_max_threshold_mv;
 
+	/* dual bq contrl related */
 	bool			no_need_en_slave_bq;
 	int			slave_bq_disabled_check_count;
 	int			master_ibus_below_critical_low_count;
+	int			chip_ok_count;
 
 	/*unsupport pps ta check count*/
 	int			unsupport_pps_ta_check_count;

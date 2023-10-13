@@ -8,6 +8,7 @@
 #include <linux/workqueue.h>
 #include <linux/sysfs.h>
 #include <asm/unaligned.h>
+/*add for sdm845 request*/
 #include <idtp9418.h>
 #include <linux/regmap.h>
 #include <linux/spinlock.h>
@@ -18,6 +19,7 @@
 #include <linux/power_supply.h>
 #include <linux/memory.h>
 #include <linux/pmic-voter.h>
+/* add for get hw country */
 #include <soc/qcom/socinfo.h>
 
 static struct idtp9220_device_info *g_di;
@@ -117,6 +119,7 @@ struct idtp9220_dt_props {
 	bool wireless_by_usbin;
 	bool only_idt_on_cmi;
 	bool is_urd_device;
+	bool ra9530_enable;
 };
 
 struct idtp9220_device_info {
@@ -134,6 +137,7 @@ struct idtp9220_device_info {
 	struct delayed_work hall3_irq_work;
 	struct delayed_work hall4_irq_work;
 	struct delayed_work wpc_det_work;
+	struct delayed_work pen_notifier_work;
 	struct pinctrl *idt_pinctrl;
 	struct pinctrl_state *idt_gpio_active;
 	struct pinctrl_state *idt_gpio_suspend;
@@ -174,6 +178,8 @@ struct idtp9220_device_info {
 	struct mutex		wpc_det_lock;
 	struct votable	*ocp_disable_votable;
 	bool 				wait_for_reverse_test;
+	int				retry_num;
+	bool				fw_check_flag;
 /*
 reverse work
 */
@@ -231,18 +237,22 @@ Factory Test Work
 	int power_good_flag;
 	int vout_on;
 
+	/*idt9220 charging info */
 	int vout;
 	int iout;
 	int f;
 	int vrect;
 	int ss;
 	int is_epp_qc3;
+	/* bpp e5_tx info */
 	int last_bpp_icl;
 	int last_bpp_vout;
+	/* qc2+f1_tx info */
 	int is_f1_tx;
 	int bpp_vout_rise;
 	int last_qc2_vout;
 	int last_qc2_icl;
+	/* qc3_epp+f1_tx info */
 	int last_qc3_vout;
 	int last_qc3_icl;
 	bool fw_update;
@@ -271,14 +281,19 @@ Factory Test Work
 	int reverse_iout;
 	int hall3_online;
 	int hall4_online;
+	unsigned long pen_val;
+	void *pen_v;
 };
 
+struct delayed_work *pen_notifier_work;
 void idtp922x_request_adapter(struct idtp9220_device_info *di);
 static void idtp9220_set_charging_param(struct idtp9220_device_info *di);
-int program_fw(struct idtp9220_device_info *di, u16 destAddr, u8 *src,
-	       u32 size);
+int program_fw(struct idtp9220_device_info *di, u16 destAddr, u8 *src, u32 size);
+int program_fw_ra9530(struct idtp9220_device_info *di, u16 destAddr, u8 *src, u32 size);
 static int program_crc_verify(struct idtp9220_device_info *di);
+static int program_crc_verify_ra9530(struct idtp9220_device_info *di);
 static int program_bootloader(struct idtp9220_device_info *di);
+static int program_bootloader_ra9530(struct idtp9220_device_info *di);
 static int idtp9220_set_rpp(struct idtp9220_device_info *di);
 static int idtp9220_set_cep(struct idtp9220_device_info *di);
 static int idtp9220_set_ept(struct idtp9220_device_info *di);
@@ -294,8 +309,45 @@ static void idt_get_reverse_soc(struct idtp9220_device_info *di);
 static int idt_signal_range = 2;
 static int idt_first_flag;
 static int pen_soc_count = 0;
+static int last_valid_pen_soc = 0;
 
 module_param_named(signal_range, idt_signal_range, int, 0644);
+
+static BLOCKING_NOTIFIER_HEAD(pen_charge_state_notifier_list);
+
+static void pen_charge_notifier_work(struct work_struct *work)
+{
+	struct idtp9220_device_info *di = container_of(work,
+							struct idtp9220_device_info,
+							pen_notifier_work.work);
+	blocking_notifier_call_chain(&pen_charge_state_notifier_list,
+								di->pen_val,
+								di->pen_v);
+	return;
+}
+
+int pen_charge_state_notifier_register_client(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_register(&pen_charge_state_notifier_list, nb);
+}
+EXPORT_SYMBOL(pen_charge_state_notifier_register_client);
+
+int pen_charge_state_notifier_unregister_client(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_unregister(&pen_charge_state_notifier_list, nb);
+}
+EXPORT_SYMBOL(pen_charge_state_notifier_unregister_client);
+
+void pen_charge_state_notifier_call_chain(unsigned long val, void *v)
+{
+	struct idtp9220_device_info *di = container_of(pen_notifier_work,
+							struct idtp9220_device_info,
+							pen_notifier_work);
+	di->pen_val = val;
+	di->pen_v = v;
+	schedule_delayed_work(&di->pen_notifier_work, msecs_to_jiffies(0));
+}
+EXPORT_SYMBOL(pen_charge_state_notifier_call_chain);
 
 /*
 #ifdef CONFIG_DRM
@@ -354,8 +406,13 @@ int idtp9220_write(struct idtp9220_device_info *di, u16 reg, u8 val)
 
 	mutex_lock(&di->write_lock);
 	rc = regmap_write(di->regmap, reg, val);
-	if (rc < 0)
-		dev_err(di->dev, "[idt] idtp9220 write error: %d\n", rc);
+	if (rc < 0) {
+		if ((reg == 0x3040) && (val == 0x80))
+			dev_err(di->dev, "[idt] reset mpu and run downloader program, ignoreNAK.\n");
+		else
+			dev_err(di->dev, "[idt] idtp9220 write error: %d, reg:%x, val:%x.\n",
+					rc, reg, val);
+	}
 
 	mutex_unlock(&di->write_lock);
 	return rc;
@@ -428,7 +485,13 @@ void idtp922x_clrInt(struct idtp9220_device_info *di, u8 *buf, u32 size)
 void reverse_clrInt(struct idtp9220_device_info *di, u8 *buf, u32 size)
 {
 	di->bus.write_buf(di, REG_SYS_INT_CLR, buf, size);
-	di->bus.write(di, REG_TX_CMD, TX_FOD_EN | TX_CLRINT);
+
+	if (di->dt_props.ra9530_enable) {
+		dev_info(di->dev, "RA9530: bus.write REG_TX_CMD.\n");
+		di->bus.write(di, REG_TX_CMD, TX_CLRINT);
+	} else {
+		di->bus.write(di, REG_TX_CMD, TX_FOD_EN | TX_CLRINT);
+	}
 }
 
 void idtp922x_enable_ext5v(struct idtp9220_device_info *di)
@@ -496,6 +559,7 @@ void idtp922x_set_pmi_icl(struct idtp9220_device_info *di, int mA)
 						  POWER_SUPPLY_PROP_CURRENT_MAX,
 						  &val);
 	} else {
+		/* set bbc icl only */
 		if (di->dc_psy)
 			power_supply_set_property(di->dc_psy,
 						  POWER_SUPPLY_PROP_CURRENT_MAX,
@@ -505,6 +569,14 @@ void idtp922x_set_pmi_icl(struct idtp9220_device_info *di, int mA)
 	dev_info(di->dev, "[%s] set wls icl %d\n", __func__, val.intval);
 }
 
+/* Adapter Type */
+/* Adapter_list = {0x00:'ADAPTER_UNKNOWN',  */
+/*            0x01:'SDP 500mA',  */
+/*            0x02:'CDP 1.1A',  */
+/*            0x03:'DCP 1.5A',  */
+/*            0x05:'QC2.0',  */
+/*            0x06:'QC3.0',  */
+/*            0x07:'PD',} */
 void idtp922x_request_adapter(struct idtp9220_device_info *di)
 {
 	ProPkt_Type pkt;
@@ -680,10 +752,27 @@ static void idt_set_reverse_fod(struct idtp9220_device_info *di, int mw)
 		return;
 	mw_l = mw & 0xff;
 	mw_h = mw >> 8;
-	di->bus.write(di, REG_FOD_LOW, mw_l);
-	di->bus.write(di, REG_FOD_HIGH, mw_h);
+
+	if (di->dt_props.ra9530_enable) {
+		dev_info(di->dev, "RA9530: bus.write REG_FOD.\n");
+		di->bus.write(di, REG_FOD_LOW_RA9530, mw_l);
+		di->bus.write(di, REG_FOD_HIGH_RA9530, mw_h);
+	} else {
+		di->bus.write(di, REG_FOD_LOW, mw_l);
+		di->bus.write(di, REG_FOD_HIGH, mw_h);
+	}
 	dev_info(di->dev, "set reverse fod: %d\n", mw);
 }
+
+/* delete because idt9415 can't set rx reset
+static void idtp9220_set_reset(struct idtp9220_device_info *di)
+{
+	if(!di)
+		return;
+	di->bus.write(di, REG_RX_RESET, 0x01);
+	dev_info(di->dev, "[idtp9220]: set RX reset\n");
+}
+*/
 
 extern char *saved_command_line;
 
@@ -935,7 +1024,6 @@ void idtp922x_sent_fw_version(struct idtp9220_device_info *di)
 	u8 fw_app_ver[4];
 
 	di->bus.read_buf(di, REG_EPRFWVER_ADDR, fw_app_ver, 4);
-
 	dev_info(di->dev, "RX FW version %x.%x.%x.%x\n",
 		 fw_app_ver[3], fw_app_ver[2], fw_app_ver[1], fw_app_ver[0]);
 
@@ -1079,7 +1167,7 @@ static int idtp9220_set_reverse_gpio(struct idtp9220_device_info *di,
 static ssize_t chip_version_show(struct device *dev,
 				 struct device_attribute *attr, char *buf)
 {
-	u8 chip_id_l, chip_id_h, chip_rev, cust_id, status, vset;
+	u8 chip_id_l, chip_id_h, chip_rev, cust_id, status, vset, crc_rc;
 	u8 fw_otp_ver[4], fw_app_ver[4];
 	struct i2c_client *client = container_of(dev, struct i2c_client, dev);
 	struct idtp9220_device_info *di = i2c_get_clientdata(client);
@@ -1098,7 +1186,15 @@ static ssize_t chip_version_show(struct device *dev,
 		di->bus.read_buf(di, REG_OTPFWVER_ADDR, fw_otp_ver, 4);
 		di->bus.read_buf(di, REG_EPRFWVER_ADDR, fw_app_ver, 4);
 
-		if (!program_crc_verify(di)) {
+
+		/* add crc verify to ensure fw version is right,
+		 * if crc failed, return app ver to 0xFE
+		 */
+		if (di->dt_props.ra9530_enable)
+			crc_rc = program_crc_verify_ra9530(di);
+		else
+			crc_rc = program_crc_verify(di);
+		if (!crc_rc) {
 			idtp9220_set_reverse_gpio(di, false);
 			dev_err(di->dev, "crc verify failed, fw: %x\n", fw_app_ver[0]);
 			fw_app_ver[0] = 0xFE;
@@ -1276,7 +1372,12 @@ static int idtp9220_reverse_charge_enable(struct idtp9220_device_info *di)
 		/* set reverse fod to REVERSE_FOD */
 		idt_set_reverse_fod(di, fod_set);
 		for (i = 0; i < 3; i++) {
-			di->bus.write(di, REG_TX_CMD, TX_EN | TX_FOD_EN);
+			if (di->dt_props.ra9530_enable) {
+				dev_info(di->dev, "bus.write REG_TX_CMD.\n");
+				di->bus.write(di, REG_TX_CMD, TX_EN);
+			} else {
+				di->bus.write(di, REG_TX_CMD, TX_EN | TX_FOD_EN);
+			}
 			msleep(50);
 			di->bus.read(di, REG_TX_DATA, &mode);
 			dev_info(di->dev, "tx data(0078): 0x%x\n", mode);
@@ -1351,10 +1452,14 @@ static int idtp9220_set_reverse_enable(struct idtp9220_device_info *di,
 		}
 		di->is_reverse_mode = 0;
 		di->reverse_pen_soc = 255;
+		pen_soc_count = 0;
 		cancel_delayed_work(&di->reverse_chg_state_work);
 		cancel_delayed_work(&di->reverse_dping_state_work);
 		cancel_delayed_work(&di->reverse_ept_type_work);
 		cancel_delayed_work(&di->reverse_chg_work);
+		/* reset pen mac addr */
+		memset(di->pen_mac_data, 0x0, sizeof(di->pen_mac_data));
+		idtp922x_sent_pen_mac(di);
 
 		ret = alarm_cancel(&di->reverse_dping_alarm);
 		if (ret < 0)
@@ -1639,6 +1744,7 @@ static int idtp9220_set_present(struct idtp9220_device_info *di, int enable)
 		cancel_delayed_work(&di->cmd_check_work);
 		cancel_delayed_work(&di->oob_set_cep_work);
 		cancel_delayed_work(&di->rx_vout_cp_close_work);
+		/* clear OOB messages */
 		schedule_delayed_work(&di->oob_clean_work,
 				      msecs_to_jiffies(100));
 	}
@@ -1696,8 +1802,11 @@ static ssize_t chip_fw_show(struct device *dev,
 {
 	int ret = 0;
 	int fw_ret = 0;
+	int crc_rc = 0;
 	struct i2c_client *client = container_of(dev, struct i2c_client, dev);
 	struct idtp9220_device_info *di = i2c_get_clientdata(client);
+
+retry_chip_fw_show:
 
 	if (di->fw_update) {
 		dev_err(&client->dev,
@@ -1711,32 +1820,82 @@ static ssize_t chip_fw_show(struct device *dev,
 	idtp9220_set_reverse_gpio(di, true);
 	msleep(100);
 
-	if (!program_fw(di, 0x0000, idt_firmware, sizeof(idt_firmware))) {
-		dev_err(&client->dev, "program fw failed.\n");
-		fw_ret = 0;
+	if (di->dt_props.ra9530_enable) {
+		if (!program_fw_ra9530(di, 0x0000, idt_firmware_ra9530, sizeof(idt_firmware_ra9530))) {
+			dev_err(&client->dev, "program ra9530 fw failed.\n");
+			fw_ret = 0;
+			di->fw_check_flag = false;
+		} else {
+			dev_err(&client->dev, "program ra9530 fw sucess.\n");
+			di->fw_version = FW_VERSION_RA9530;
+			fw_ret = 1;
+			di->fw_check_flag = true;
+		}
 	} else {
-		dev_err(&client->dev, "program fw sucess.\n");
-		di->fw_version = FW_VERSION;
-		fw_ret = 1;
+		if (!program_fw(di, 0x0000, idt_firmware, sizeof(idt_firmware))) {
+			dev_err(&client->dev, "program fw failed.\n");
+			fw_ret = 0;
+		} else {
+			dev_err(&client->dev, "program fw sucess.\n");
+			di->fw_version = FW_VERSION;
+			fw_ret = 1;
+		}
 	}
+
 	idtp9220_set_reverse_gpio(di, false);
-	msleep(100);
+	if (di->dt_props.ra9530_enable)
+		msleep(500);
+	else
+		msleep(100);
 
 	idtp9220_set_reverse_gpio(di, true);
 	msleep(100);
 
 	/* start crc verify */
-	if (!program_crc_verify(di)) {
-		dev_err(&client->dev, "crc verify failed.\n");
-		ret = 0;
+	if (di->dt_props.ra9530_enable) {
+		crc_rc = program_crc_verify_ra9530(di);
+		if (!crc_rc) {
+			dev_err(&client->dev, "RA9530: crc verify failed.\n");
+			di->fw_check_flag = false;
+			ret = 0;
+		} else {
+			dev_err(&client->dev, "RA9530: crc verify success.\n");
+			di->fw_check_flag = true;
+			ret = 1;
+		}
 	} else {
-		dev_err(&client->dev, "crc verify success.\n");
-		ret = 1;
+		crc_rc = program_crc_verify(di);
+		if (!crc_rc) {
+			dev_err(&client->dev, "crc verify failed.\n");
+			ret = 0;
+		} else {
+			dev_err(&client->dev, "crc verify success.\n");
+			ret = 1;
+		}
 	}
 
 	idtp9220_set_reverse_gpio(di, false);
 	di->fw_update = false;
 	pm_relax(di->dev);
+
+	if (di->dt_props.ra9530_enable) {
+		if (di->fw_check_flag)
+			dev_info(di->dev, "chip_fw_show succ.\n");
+
+		if ((!di->fw_check_flag) && (di->retry_num < 2)) {
+			di->retry_num++;
+			dev_info(di->dev, "Retry chip_fw_show, cnt:%d.\n", di->retry_num);
+			msleep(500);
+			goto retry_chip_fw_show;
+		}
+
+		if ((!di->fw_check_flag) && (di->retry_num >= 2)) {
+			di->retry_num = 0;
+			dev_info(di->dev, "chip_fw_show err.\n");
+		}
+
+	}
+
 	if (ret && fw_ret)
 		return snprintf(buf, PAGE_SIZE, "Firmware Update:Success\n");
 	else
@@ -2079,6 +2238,280 @@ int program_fw(struct idtp9220_device_info *di, u16 destAddr, u8 *src,
 }
 #endif
 
+//=====================================================================
+// RA9530 FW Program
+static int program_bootloader_ra9530(struct idtp9220_device_info *di)
+{
+	int i, rc = 0;
+	int len;
+
+	len = sizeof(bootloader_data_ra9530);
+	dev_info(di->dev, "%s: len:%d.\n", __func__, len);
+
+	for (i = 0; i < len; i++) {
+		rc = di->bus.write(di, 0x0000 + i, bootloader_data_ra9530[i]);
+		if (rc)
+			return rc;
+	}
+	dev_info(di->dev, "%s: write bootloader_data_ra9530 finish.\n", __func__);
+
+	return 0;
+}
+
+static int program_crc_verify_ra9530(struct idtp9220_device_info *di)
+{
+	u8 val, data1, data2;
+	int retry_cnt = 0;
+
+	if (di->bus.write(di, 0x3000, 0x5a))
+		return false;
+	if (di->bus.write(di, 0x3040, 0x10))
+		return false;
+	if (di->bus.write(di, 0x3020, 0x5a))
+		return false;
+	if (di->bus.write(di, 0x3040, 0x10))
+		return false;
+	msleep(10);
+	if (program_bootloader_ra9530(di))
+		return false;
+	if (di->bus.write(di, 0x3048, 0xF0))
+		return false;
+	di->bus.write(di, 0x3040, 0x80);
+	msleep(100);
+
+	di->bus.read(di, 0x1000, &data1);
+	printk(KERN_EMERG "RA9530_DBG: 0x1000 %s:%d :%02x\n", __func__, __LINE__, data1);
+	di->bus.read(di, 0x1001, &data2);
+	printk(KERN_EMERG "RA9530_DBG: 0x1001 %s:%d :%02x\n", __func__, __LINE__, data2);
+	if ((data1 != 0x32) || ((data2 != 0xca) && (data2 != 0xba))) {
+		dev_info(di->dev, "%s: bootloader version err.\n", __func__);
+		return false;
+	}
+
+	/* configure MTP crc check utility */
+	/* step1 load start address */
+	if (di->bus.write(di, 0x100A, 0x00))
+		return false;
+	if (di->bus.write(di, 0x100B, 0x00))
+		return false;
+	/* step2 load mtp data size 0x7F00 */
+	if (di->bus.write(di, 0x100C, 0x00))
+		return false;
+	if (di->bus.write(di, 0x100D, 0x7F))
+		return false;
+	/* step3 write crc valuve */
+	if (di->bus.write(di, 0x1010, CRC_VERIFY_NUM0))
+		return false;
+	if (di->bus.write(di, 0x1011, CRC_VERIFY_NUM1))
+		return false;
+	if (di->bus.write(di, 0x1012, CRC_VERIFY_NUM2))
+		return false;
+	if (di->bus.write(di, 0x1013, CRC_VERIFY_NUM3))
+		return false;
+	/* start crc check */
+	if (di->bus.write(di, 0x1008, 0x11)) {
+		dev_err(di->dev, "RA9530: on OTP buffer CRC validation error\n");
+		return false;
+	}
+
+	do {
+		msleep(120);
+		di->bus.read(di, 0x1008, &val);
+		if ((val & 1) != 0)
+			dev_info(di->dev, "RA9530: Programming crc check val:%02x\n", val);
+		if (retry_cnt++ > 50)
+			break;
+	} while ((val & 1) != 0);	//check if crc program finishes "OK"
+
+	if (retry_cnt > 50) {
+		dev_err(di->dev, "RA9530: Programming CRC finished failed retry:%d\n", retry_cnt);
+		return false;
+	} else {
+		di->bus.read(di, 0x1009, &val);
+		if (val != 2) {
+			dev_err(di->dev, "RA9530: crc check failed status:%02x\n", val);
+			return false;
+		} else {
+			dev_info(di->dev, "RA9530: crc check success!\n");
+			return true;
+		}
+	}
+}
+
+int program_fw_ra9530(struct idtp9220_device_info *di, u16 destAddr, u8 *src,
+	       u32 size)
+{
+	int i, j;
+	int retry_cnt = 0;
+	u8 data, data1, data2;
+
+	di->bus.read(di, 0x5870, &data);
+	printk(KERN_EMERG "RA9530_DBG: 0x5870 %s:%d :%02x\n", __func__, __LINE__, data);
+	di->bus.read(di, 0x5874, &data);
+	printk(KERN_EMERG "RA9530_DBG: 0x5874 %s:%d :%02x\n", __func__, __LINE__, data);
+
+	if (di->bus.write(di, 0x3000, 0x5a))
+		return false;
+	if (di->bus.write(di, 0x3040, 0x10))
+		return false;
+	if (di->bus.write(di, 0x3020, 0x5a))
+		return false;
+	if (di->bus.write(di, 0x3040, 0x10))
+		return false;
+	if (di->bus.write(di, 0x5C50, 0x5A))
+		return false;
+
+	do {
+		if (di->bus.write(di, 0x5C2C, 0x02))
+			return false;
+		msleep(30);
+
+		di->bus.read(di, 0x5C2C, &data);
+		if ((data & 0x80) != 0x80)
+			dev_info(di->dev, "RA9530_DBG: 0x5C2C check:0x%02x, retry cnt:%d.\n", data, retry_cnt);
+		retry_cnt++;
+
+		if (retry_cnt > 5)
+			break;
+	} while ((data & 0x80) != 0x80);
+
+	if (retry_cnt > 5) {
+		dev_err(di->dev, "RA9530_DBG: 0x5C2C check err, retry num:%d\n", retry_cnt);
+		return false;
+	}
+
+	if ((data & 0x70) == 0x0) {
+		dev_err(di->dev, "RA9530_DBG: 0x5C2C check pass.\n");
+	} else {
+		dev_err(di->dev, "RA9530_DBG: 0x5C2C check err:0x%02x.\n", data);
+		return false;
+	}
+
+	if (program_bootloader_ra9530(di))
+		return false;
+	if (di->bus.write(di, 0x3048, 0xF0))
+		return false;
+	di->bus.write(di, 0x3040, 0x80);
+	msleep(100);
+
+	di->bus.read(di, 0x1000, &data1);
+	printk(KERN_EMERG "RA9530_DBG: 0x1000 %s:%d :%02x\n", __func__, __LINE__, data1);
+	di->bus.read(di, 0x1001, &data2);
+	printk(KERN_EMERG "RA9530_DBG: 0x1001 %s:%d :%02x\n", __func__, __LINE__, data2);
+	if ((data1 != 0x32) || ((data2 != 0xca) && (data2 != 0xba))) {
+		dev_info(di->dev, "%s: bootloader version err.\n", __func__);
+		return false;
+	}
+
+	retry_cnt = 0;
+	if (di->bus.write(di, 0x1008, 0x31))
+		return false;
+
+	do {
+		msleep(1000);
+		di->bus.read(di, 0x1008, &data);
+		if ((data & 0x1) != 0)
+			dev_info(di->dev, "RA9530_DBG: 0x1008 check:0x%02x, retry cnt:%d.\n", data, retry_cnt);
+		retry_cnt++;
+
+		if (retry_cnt > 5)
+			break;
+	} while ((data & 0x1) != 0);
+
+	if (retry_cnt > 5) {
+		dev_err(di->dev, "RA9530_DBG: 0x1008 check err, retry num:%d\n", retry_cnt);
+		return false;
+	}
+
+	di->bus.read(di, 0x1009, &data);
+	if (data == 0x0) {
+		dev_err(di->dev, "RA9530_DBG: 0x1009 check pass.\n");
+	} else {
+		dev_err(di->dev, "RA9530_DBG: 0x1009 check err:0x%02x.\n", data);
+		return false;
+	}
+
+	idtp9220_set_reverse_gpio(di, false);
+	msleep(500);
+	idtp9220_set_reverse_gpio(di, true);
+	msleep(100);
+
+	if (di->bus.write(di, 0x3000, 0x5a))
+		return false;
+	if (di->bus.write(di, 0x3040, 0x10))
+		return false;
+	if (di->bus.write(di, 0x3020, 0x5a))
+		return false;
+	if (di->bus.write(di, 0x3040, 0x10))
+		return false;
+	msleep(10);
+
+	if (program_bootloader_ra9530(di))
+		return false;
+	if (di->bus.write(di, 0x3048, 0xF0))
+		return false;
+	di->bus.write(di, 0x3040, 0x80);
+	msleep(100);
+
+	for (i = destAddr; i < destAddr + size; i += 128) {	// program pages of 128 bytes
+
+		char sBuf[136];	// 136=8+128 --- 8-byte header plus 128-byte data
+		u16 StartAddr = (u16) i;
+		u16 CheckSum = StartAddr;
+		u16 CodeLength = 128;
+		int retry_cnt = 0;
+
+		memset(sBuf, 0, 136);
+		memcpy(sBuf + 8, src, 128);	// Copy 128 bytes from srcData (starting at i+srcOffs)
+		src += 128;
+
+		for (j = 127; j >= 0; j--)
+			CheckSum += sBuf[j + 8];	// add the nonzero values
+		CheckSum += CodeLength;	// finish calculation of the check sum
+
+		memcpy(sBuf + 2, &StartAddr, 2);
+		memcpy(sBuf + 4, &CodeLength, 2);
+		memcpy(sBuf + 6, &CheckSum, 2);
+
+		for (j = 0; j < CodeLength + 8; j++) {
+			if (di->bus.write(di, 0x1008 + j, sBuf[j])) {
+				printk("RA9530_DBG: on writing to OTP buffer error");
+				return false;
+			}
+		}
+
+		if (di->bus.write(di, 0x1008, 1)) {
+			printk("RA9530_DBG: on OTP buffer validation error");
+			return false;
+		}
+
+		do {
+			msleep(10);
+			di->bus.read(di, 0x1008, sBuf);
+			if (sBuf[0] == 1)
+				printk("RA9530_DBG: Programming check 0x1008:%02x i:%d\n", sBuf[0], i);
+			if (retry_cnt++ > 50)
+				break;
+		} while (sBuf[0] == 1);	//check if OTP programming finishes "OK"
+
+		if (retry_cnt > 50) {
+			printk("RA9530_DBG: Programming OTP buffer retry failed :%d\n", retry_cnt);
+			return false;
+		} else {
+			di->bus.read(di, 0x1009, sBuf);
+			if (sBuf[0] != 2) {
+				printk("RA9530_DBG: Programming check 0x1009:%02x.\n", sBuf[0]);
+				return false;
+			} else {
+				printk("RA9530_DBG: Program OTP 0x%04x\n", i);
+			}
+		}
+	}
+
+	return true;
+}
+//=============================================================================
+
 static int idtp9220_parse_dt(struct idtp9220_device_info *di)
 {
 	struct device_node *node = di->dev->of_node;
@@ -2129,6 +2562,12 @@ static int idtp9220_parse_dt(struct idtp9220_device_info *di)
 
 	di->dt_props.is_urd_device = of_property_read_bool(node,
 							   "mi,urd-device");
+
+	di->dt_props.ra9530_enable = of_property_read_bool(node,
+							   "idt,ra9530-enable");
+	if (di->dt_props.ra9530_enable) {
+		pr_info("RA9530: parse_dt RA9530.\n");
+	}
 
 	return 0;
 }
@@ -2341,45 +2780,16 @@ static void idtp9220_dc_check_work(struct work_struct *work)
 	}
 }
 
-
-
 static void idtp9220_chg_detect_work(struct work_struct *work)
 {
 	struct idtp9220_device_info *di =
 	    container_of(work, struct idtp9220_device_info,
 			 chg_detect_work.work);
 
-	union power_supply_propval val = { 0, };
-	union power_supply_propval pc_val = { 0, };
-	int rc;
-	bool valid_typec_mode = false;
-
 	dev_info(di->dev, "[idt] enter %s\n", __func__);
 
-	rc = idtp9220_get_property_names(di);
-	if (rc < 0)
-		return;
-	/*set idtp9220 into sleep mode when usbin */
-	power_supply_get_property(di->usb_psy, POWER_SUPPLY_PROP_TYPEC_MODE, &val);
-	power_supply_get_property(di->pc_port_psy,
-				  POWER_SUPPLY_PROP_ONLINE, &pc_val);
-	if (val.intval >= POWER_SUPPLY_TYPEC_SOURCE_DEFAULT && val.intval <= POWER_SUPPLY_TYPEC_SOURCE_HIGH)
-		valid_typec_mode = true;
-
-	if (valid_typec_mode || pc_val.intval) {
-		dev_info(di->dev,
-			 "typec_mode: %d or pc online: %d,set chip disable\n",
-			 val.intval, pc_val.intval);
-		//idtp9220_set_enable_mode(di, false);
-		//schedule_delayed_work(&di->fw_download_work, 1 * HZ);
-		return;
-	}
-
-	/* reset rx for bootup charging */
-	idtp9220_set_enable_mode(di, false);
-	msleep(10);
-	idtp9220_set_enable_mode(di, true);
-
+	schedule_delayed_work(&di->fw_download_work, 0);
+	return;
 }
 
 static void idtp9220_bpp_connect_load_work(struct work_struct *work)
@@ -3436,7 +3846,8 @@ static void reverse_ept_type_get_work(struct work_struct *work)
 			    (ept_val & EPT_OCP) ||
 			    (ept_val & EPT_OVP) ||
 			    (ept_val & EPT_LVP) ||
-			    (ept_val & EPT_OTP) || (ept_val & EPT_POCP)) {
+			    (ept_val & EPT_OTP) ||
+				(ept_val & EPT_POCP) || (ept_val & EPT_IDAU)) {
 				dev_info(di->dev,
 					 "TX mode in ept and disable reverse charging\n");
 				idtp9220_set_reverse_enable(di, false);
@@ -3609,23 +4020,25 @@ static void idtp9220_set_charging_param(struct idtp9220_device_info *di)
 		break;
 	}
 
-	power_supply_get_property(di->batt_psy, POWER_SUPPLY_PROP_STATUS, &val);
-	batt_sts = val.intval;
+	if (di->batt_psy) {
+		power_supply_get_property(di->batt_psy, POWER_SUPPLY_PROP_STATUS, &val);
+		batt_sts = val.intval;
 
-	power_supply_get_property(di->batt_psy,
-				  POWER_SUPPLY_PROP_CAPACITY, &val);
-	soc = val.intval;
+		power_supply_get_property(di->batt_psy,
+					POWER_SUPPLY_PROP_CAPACITY, &val);
+		soc = val.intval;
 
-	power_supply_get_property(di->batt_psy,
-				  POWER_SUPPLY_PROP_VOLTAGE_NOW, &val);
-	vol_now = val.intval;
+		power_supply_get_property(di->batt_psy,
+					POWER_SUPPLY_PROP_VOLTAGE_NOW, &val);
+		vol_now = val.intval;
 
-	power_supply_get_property(di->batt_psy,
-				  POWER_SUPPLY_PROP_CURRENT_NOW, &val);
-	cur_now = val.intval;
+		power_supply_get_property(di->batt_psy,
+					POWER_SUPPLY_PROP_CURRENT_NOW, &val);
+		cur_now = val.intval;
 
-	power_supply_get_property(di->batt_psy, POWER_SUPPLY_PROP_HEALTH, &val);
-	health = val.intval;
+		power_supply_get_property(di->batt_psy, POWER_SUPPLY_PROP_HEALTH, &val);
+		health = val.intval;
+	}
 
 	idtp9220_get_iout(di);
 
@@ -3639,16 +4052,25 @@ static void idtp9220_set_charging_param(struct idtp9220_device_info *di)
 		 "[idtp] soc:%d,vol_now:%d,cur_now:%d,health:%d, bat_status:%d\n",
 		 soc, vol_now, cur_now, health, batt_sts);
 
+	/* adapter:qc2/qc3; tx:e5/d5x_10W;
+	 * vout/psns is setted in delayed work
+	 */
 	if (adapter_vol == ADAPTER_BPP_QC_VOL && di->is_compatible_hwid) {
 		schedule_delayed_work(&di->bpp_e5_tx_work, msecs_to_jiffies(0));
 		goto out;
 	}
 
+	/* adapter:qc2; tx:F1_27W;
+	 * vout/psns is setted in delayed work
+	 */
 	if (di->tx_charger_type == ADAPTER_QC2 && di->is_f1_tx) {
 		schedule_delayed_work(&di->qc2_f1_tx_work, msecs_to_jiffies(0));
 		goto out;
 	}
 
+	/* adapter:qc3_epp; tx:F1_27W;
+	 * vout/psns is setted in delayed work
+	 */
 	if (di->is_epp_qc3) {
 		schedule_delayed_work(&di->qc3_epp_work, msecs_to_jiffies(0));
 		goto out;
@@ -3699,6 +4121,7 @@ static void idtp9220_set_charging_param(struct idtp9220_device_info *di)
 		schedule_delayed_work(&di->voice_tx_work, msecs_to_jiffies(0));
 		goto out;
 	}
+	/* MI adapter, change vout only after vswitch success */
 	if (adapter_vol == ADAPTER_EPP_MI_VOL && di->vswitch_ok) {
 		switch (di->status) {
 		case NORMAL_MODE:
@@ -3712,6 +4135,7 @@ static void idtp9220_set_charging_param(struct idtp9220_device_info *di)
 				} else {
 					icl_curr = idtp9220_get_taper_charging_current(di);
 				}
+				/* close cp, avoid battery OV */
 				if (di->wireless_psy) {
 					val.intval = 0;
 					power_supply_set_property(di->wireless_psy, POWER_SUPPLY_PROP_WIRELESS_CP_EN, &val);
@@ -3848,6 +4272,7 @@ static void idtp9220_wpc_det_work(struct work_struct *work)
 		dev_err(di->dev, "get property error: %d\n", ret);
 		return;
 	}
+	/* if power good is low return */
 	if (!di->power_good_flag)
 		return;
 
@@ -3898,61 +4323,81 @@ static void idtp9220_fw_download_work(struct work_struct *work)
 			 fw_download_work.work);
 
 	u8 fw_app_ver[4] = { 0 };
-	union power_supply_propval val = { 0, };
 	bool crc_ok = false;
 	int rc = 0;
+	int crc_rc = 0;
+	bool fw_ok = false;
 
 	dev_info(di->dev, "[idt] enter %s\n", __func__);
 
 	if (di->fw_update) {
-		dev_info(di->dev, "[idtp9415] [%s] FW Update is on going!\n",
+		dev_info(di->dev, "[idtp9418] [%s] FW Update is on going!\n",
 			 __func__);
 		return;
 	}
 
-	power_supply_get_property(di->dc_psy, POWER_SUPPLY_PROP_ONLINE, &val);
+	pm_stay_awake(di->dev);
+	di->fw_update = true;
+	rc = idtp9220_set_reverse_gpio(di, true);
+	msleep(100);
+	rc = di->bus.read_buf(di, REG_EPRFWVER_ADDR, fw_app_ver, 4);
+	dev_info(di->dev, "%s: RX_FW version %x.%x.%x.%x\n", __func__,
+		 fw_app_ver[3], fw_app_ver[2], fw_app_ver[1], fw_app_ver[0]);
 
-	if (!val.intval) {
-		pm_stay_awake(di->dev);
-		di->fw_update = true;
+	if (!rc)
+		di->chip_ok = 1;
+	else
+		di->chip_ok = 0;
+
+	di->fw_version = fw_app_ver[0];
+	if (di->dt_props.ra9530_enable)
+		crc_rc = program_crc_verify_ra9530(di);
+	else
+		crc_rc = program_crc_verify(di);
+
+	if (!crc_rc) {
+		dev_err(di->dev, "update crc verify failed.\n");
+		crc_ok = false;
+	} else {
+		dev_info(di->dev, "update crc verify success.\n");
+		crc_ok = true;
+	}
+
+	idtp9220_set_reverse_gpio(di, false);
+	if (di->dt_props.ra9530_enable)
+		msleep(500);
+	else
+		msleep(100);
+
+	if (di->dt_props.ra9530_enable) {
+		if ((fw_app_ver[3] == 0x2) && (fw_app_ver[2] == 0xa)
+				&& (fw_app_ver[0] >= FW_VERSION_RA9530))
+			fw_ok = true;
+	} else {
+		if (fw_app_ver[0] >= FW_VERSION)
+			fw_ok = true;
+	}
+	if (fw_ok && crc_ok) {
+		dev_info(di->dev, "FW: [0]:0x%x [2]:0x%x, crc: %d so skip upgrade\n",
+			 fw_app_ver[0], fw_app_ver[2], crc_ok);
+	} else {
 		idtp9220_set_reverse_gpio(di, true);
 		msleep(100);
-		rc = di->bus.read_buf(di, REG_EPRFWVER_ADDR, fw_app_ver, 4);
-		dev_info(di->dev, "%s: RX_FW version %x.%x.%x.%x\n", __func__,
-			 fw_app_ver[3], fw_app_ver[2], fw_app_ver[1],
-			 fw_app_ver[0]);
 
-		if (!rc)
-			di->chip_ok = 1;
-		else
-			di->chip_ok = 0;
-
-		di->fw_version = fw_app_ver[0];
-		if (!program_crc_verify(di)) {
-			dev_err(di->dev, "update crc verify failed.\n");
-			crc_ok = false;
+		dev_info(di->dev, "%s: FW download start\n", __func__);
+		if (di->dt_props.ra9530_enable) {
+			if (!program_fw_ra9530(di, 0x0000, idt_firmware_ra9530, sizeof(idt_firmware_ra9530))) {
+				dev_err(di->dev, "program RA9530 fw failed.\n");
+				di->fw_check_flag = false;
+			} else {
+				dev_info(di->dev,
+					 "[idt] %s: program RA9530 fw %ld bytes done\n",
+					 __func__, sizeof(idt_firmware_ra9530));
+				di->fw_version = FW_VERSION_RA9530;
+				di->fw_check_flag = true;
+			}
 		} else {
-			dev_info(di->dev, "update crc verify success.\n");
-			crc_ok = true;
-		}
-
-		idtp9220_set_reverse_gpio(di, false);
-		msleep(30);
-
-		if ((fw_app_ver[3] == 0x2
-		     && fw_app_ver[2] == 0x6
-		     && fw_app_ver[1] == 0x1
-		     && fw_app_ver[0] >= FW_VERSION) && (crc_ok)) {
-			dev_info(di->dev, "FW: 0x%x, crc: %d so skip upgrade\n",
-				 fw_app_ver[0], crc_ok);
-		} else {
-#ifndef CONFIG_FACTORY_BUILD
-			idtp9220_set_reverse_gpio(di, true);
-			msleep(100);
-
-			dev_info(di->dev, "%s: FW download start\n", __func__);
-			if (!program_fw
-			    (di, 0x0000, idt_firmware, sizeof(idt_firmware))) {
+			if (!program_fw(di, 0x0000, idt_firmware, sizeof(idt_firmware))) {
 				dev_err(di->dev, "program fw failed.\n");
 			} else {
 				dev_info(di->dev,
@@ -3960,31 +4405,66 @@ static void idtp9220_fw_download_work(struct work_struct *work)
 					 __func__, sizeof(idt_firmware));
 				di->fw_version = FW_VERSION;
 			}
-
-			idtp9220_set_reverse_gpio(di, false);
-			msleep(100);
-			/* start crc verify */
-			idtp9220_set_reverse_gpio(di, true);
-			msleep(100);
-
-			if (!program_crc_verify(di))
-				dev_err(di->dev, "crc verify failed.\n");
-			else
-				dev_info(di->dev, "crc verify success.\n");
-			idtp9220_set_reverse_gpio(di, false);
-#else
-			dev_info(di->dev, "%s: factory build, don't update\n",
-				 __func__);
-#endif
 		}
-		di->fw_update = false;
-		pm_relax(di->dev);
-	} else
-		dev_info(di->dev,
-			 "%s: Skip FW download due to wireless charging\n",
-			 __func__);
-}
 
+		idtp9220_set_reverse_gpio(di, false);
+		if (di->dt_props.ra9530_enable)
+			msleep(500);
+		else
+			msleep(100);
+		/* start crc verify */
+		idtp9220_set_reverse_gpio(di, true);
+		msleep(100);
+
+		if (di->dt_props.ra9530_enable) {
+			crc_rc = program_crc_verify_ra9530(di);
+			if (!crc_rc) {
+				dev_err(di->dev, "RA9530: crc verify failed.\n");
+				di->fw_check_flag = false;
+			} else {
+				dev_info(di->dev, "RA9530: crc verify success.\n");
+				di->fw_check_flag = true;
+			}
+		} else {
+			crc_rc = program_crc_verify(di);
+			if (!crc_rc) {
+				dev_err(di->dev, "crc verify failed.\n");
+			} else {
+				dev_info(di->dev, "crc verify success.\n");
+			}
+		}
+
+		idtp9220_set_reverse_gpio(di, false);
+	}
+
+	di->fw_update = false;
+	pm_relax(di->dev);
+
+	if (di->dt_props.ra9530_enable) {
+		if (di->fw_check_flag)
+			dev_info(di->dev, "fw_download succ.\n");
+
+		if ((!di->fw_check_flag) && (di->retry_num < 2)) {
+			di->retry_num++;
+			dev_info(di->dev, "Retry fw_download_work, cnt:%d.\n", di->retry_num);
+			schedule_delayed_work(&di->fw_download_work, msecs_to_jiffies(1000));
+			return;
+		}
+
+		if ((!di->fw_check_flag) && (di->retry_num >= 2)) {
+			di->retry_num = 0;
+			dev_info(di->dev, "fw_download err.\n");
+		}
+
+	}
+
+	if (di->hall3_online)
+		schedule_delayed_work(&di->hall3_irq_work, msecs_to_jiffies(2000));
+	else if (di->hall4_online)
+		schedule_delayed_work(&di->hall4_irq_work, msecs_to_jiffies(2000));
+	else
+		return;
+}
 
 static void idtp9220_rx_vout_cp_close_work(struct work_struct *work)
 {
@@ -4095,7 +4575,10 @@ static int idt_trx_get_ble_mac(struct idtp9220_device_info *di)
 	int rc = 0, i = 0;
 	u8 mac_buf[MAC_LEN] = { 0 };
 
-	rc = di->bus.read_buf(di, REG_MAC_ADDR, mac_buf, MAC_LEN);
+	if (di->dt_props.ra9530_enable)
+		rc = di->bus.read_buf(di, REG_MAC_ADDR_RA9530, mac_buf, MAC_LEN);
+	else
+		rc = di->bus.read_buf(di, REG_MAC_ADDR, mac_buf, MAC_LEN);
 	if (rc < 0) {
 		dev_err(di->dev, "trx read mac addr error: %d\n", rc);
 		return rc;
@@ -4117,6 +4600,12 @@ static void idtp9220_hall3_irq_work(struct work_struct *work)
 	struct idtp9220_device_info *di =
 	    container_of(work, struct idtp9220_device_info,
 			 hall3_irq_work.work);
+
+	if (di->fw_update) {
+		dev_info(di->dev, "[hall3] fw updating, don't enable reverse chg\n");
+		return;
+	}
+
 	if (di->hall3_online)
 		idtp9220_set_reverse_enable(di, true);
 	else if (!di->hall4_online) {
@@ -4135,6 +4624,11 @@ static void idtp9220_hall4_irq_work(struct work_struct *work)
 	struct idtp9220_device_info *di =
 	    container_of(work, struct idtp9220_device_info,
 			 hall4_irq_work.work);
+
+	if (di->fw_update) {
+		dev_info(di->dev, "[hall4] fw updating, don't enable reverse chg\n");
+		return;
+	}
 
 	if (di->hall4_online)
 		idtp9220_set_reverse_enable(di, true);
@@ -4265,16 +4759,20 @@ static void idtp9220_irq_work(struct work_struct *work)
 		}
 		if (int_val & INT_GET_PPP) {
 			idtp922x_receivePkt2(di, recive_data);
-			dev_err(di->dev, "[ factory reverse test ] receive dates: 0x%02x, 0x%02x\n", recive_data[0], recive_data[1]);
-			if (recive_data[0] == 0x18 && recive_data[1] == 0x31) {
-				// done
-				dev_err(di->dev, "[ factory reverse test ] receiver reverse test done\n");
-				idtp9220_set_reverse_enable(di, false);
-				di->wait_for_reverse_test = false;
-			} else if (recive_data[0] == 0x18 && recive_data[1] == 0x3D) {
-				//ready
-				dev_err(di->dev, "[ factory reverse test ] receiver reverse test ready, cancel timer\n");
-				alarm_cancel(&di->reverse_test_ready_alarm);
+			if (di->dt_props.ra9530_enable) {
+				dev_err(di->dev, "[idt] INT_GET_PPP: receive dates: 0x%02x, 0x%02x\n", recive_data[0], recive_data[1]);
+			} else {
+				dev_err(di->dev, "[ factory reverse test ] receive dates: 0x%02x, 0x%02x\n", recive_data[0], recive_data[1]);
+				if (recive_data[0] == 0x18 && recive_data[1] == 0x31) {
+					// done
+					dev_err(di->dev, "[ factory reverse test ] receiver reverse test done\n");
+					idtp9220_set_reverse_enable(di, false);
+					di->wait_for_reverse_test = false;
+				} else if (recive_data[0] == 0x18 && recive_data[1] == 0x3D) {
+					//ready
+					dev_err(di->dev, "[ factory reverse test ] receiver reverse test ready, cancel timer\n");
+					alarm_cancel(&di->reverse_test_ready_alarm);
+				}
 			}
 		}
 	      reverse_out:
@@ -4691,15 +5189,20 @@ static irqreturn_t idtp9220_hall3_irq_handler(int irq, void *dev_id)
 
 	if (gpio_is_valid(di->dt_props.hall3_gpio)) {
 		if (gpio_get_value(di->dt_props.hall3_gpio)) {
+			dev_info(di->dev, "idtp9220_hall3_irq_handler: pen detach\n");
 			di->hall3_online = 0;
+			pen_charge_state_notifier_call_chain(0, NULL);
 			if (di->hall4_online) {
 				dev_info(di->dev, "idtp9220_hall3_irq_handler: hall4 online, return\n");
+				pen_charge_state_notifier_call_chain(1, NULL);
 				return IRQ_HANDLED;
 			}
 			schedule_delayed_work(&di->hall3_irq_work, msecs_to_jiffies(0));
 			return IRQ_HANDLED;
 		} else {
+			dev_info(di->dev, "idtp9220_hall3_irq_handler: pen attach\n");
 			di->hall3_online = 1;
+			pen_charge_state_notifier_call_chain(1, NULL);
 		}
 	}
 
@@ -4719,15 +5222,20 @@ static irqreturn_t idtp9220_hall4_irq_handler(int irq, void *dev_id)
 
 	if (gpio_is_valid(di->dt_props.hall4_gpio)) {
 		if (gpio_get_value(di->dt_props.hall4_gpio)) {
+			dev_info(di->dev, "idtp9220_hall4_irq_handler: pen detach\n");
 			di->hall4_online = 0;
+			pen_charge_state_notifier_call_chain(0, NULL);
 			if (di->hall3_online) {
 				dev_info(di->dev, "idtp9220_hall4_irq_handler: hall3 online, return\n");
+				pen_charge_state_notifier_call_chain(1, NULL);
 				return IRQ_HANDLED;
 			}
 			schedule_delayed_work(&di->hall4_irq_work, msecs_to_jiffies(0));
 			return IRQ_HANDLED;
 		} else {
+			dev_info(di->dev, "idtp9220_hall4_irq_handler: pen attach\n");
 			di->hall4_online = 1;
+			pen_charge_state_notifier_call_chain(1, NULL);
 		}
 	}
 
@@ -4988,29 +5496,41 @@ static void idt_get_reverse_vout(struct idtp9220_device_info *di)
 
 static void idt_get_reverse_soc(struct idtp9220_device_info *di)
 {
-	u8 soc = 0;
+	u8 soc = 0xFF;
 
 	if (!di)
 		return;
 
-	di->bus.read(di, REG_CHG_STATUS, &soc);
+	if (di->dt_props.ra9530_enable)
+		di->bus.read(di, REG_CHG_STATUS_RA9530, &soc);
+	else
+		di->bus.read(di, REG_CHG_STATUS, &soc);
+
 	if ((soc < 0) || (soc > 0x64))
 	{
 		if (soc == 0xFF) {
+			dev_info(di->dev, "[reverse] soc is default 0xFF\n");
 			di->reverse_pen_soc = 0xFF;
+			return;
 		} else {
+			dev_info(di->dev, "[reverse] soc illegal: %d\n", soc);
 			return;
 		}
 	}
+	dev_info(di->dev, "[reverse] soc is %d\n", soc);
 	di->reverse_pen_soc = soc;
+	if (di->wireless_psy)
+		power_supply_changed(di->wireless_psy);
 
 	if ((di->reverse_pen_soc == 100) && (pen_soc_count < SOC_100_RETRY)) {
+		dev_info(di->dev, "[reverse] soc is 100 count: %d\n", pen_soc_count);
 		pen_soc_count ++;
 	} else {
 		pen_soc_count = 0;
 	}
 
 	if (pen_soc_count == SOC_100_RETRY) {
+		dev_info(di->dev, "[reverse] soc is 100 exceed 6 times, disable reverse chg!\n");
 		idtp9220_set_reverse_enable(di, false);
 		di->is_reverse_mode = 0;
 		di->is_reverse_chg = 2;
@@ -5044,7 +5564,11 @@ static void idt_get_reverse_temp(struct idtp9220_device_info *di)
 	if (!di)
 		return;
 
-	di->bus.read(di, REG_REVERSE_TEMP, &temp);
+	if (di->dt_props.ra9530_enable)
+		di->bus.read(di, REG_REVERSE_TEMP_RA9530, &temp);
+	else
+		di->bus.read(di, REG_REVERSE_TEMP, &temp);
+
 	dev_info(di->dev, "[reverse] temp is %d\n", temp);
 	return;
 }
@@ -5062,6 +5586,7 @@ static void idt_reverse_chg_work(struct work_struct *work)
 		idt_get_reverse_soc(di);
 	}
 	else {
+		dev_info(di->dev, "reverse chg closed, return\n");
 		di->reverse_pen_soc = 255;
 		di->reverse_vout = 0;
 		di->reverse_iout = 0;
@@ -5290,10 +5815,15 @@ static int idtp9220_get_prop(struct power_supply *psy,
 		}
 		break;
 	case POWER_SUPPLY_PROP_REVERSE_PEN_SOC:
-		if (di->is_reverse_mode || di->is_boost_mode)
+		if (di->is_reverse_mode || di->is_boost_mode) {
 			val->intval = di->reverse_pen_soc;
-		else
-			val->intval = 50;
+			if (di->reverse_pen_soc != 255)
+				last_valid_pen_soc = di->reverse_pen_soc;
+		} else {
+			val->intval = last_valid_pen_soc;
+			if (val->intval)
+				dev_info(di->dev, "report last valid pen soc: %d\n", val->intval);
+		}
 		break;
 	case POWER_SUPPLY_PROP_REVERSE_VOUT:
 		if (di->is_reverse_mode || di->is_boost_mode)
@@ -5365,14 +5895,17 @@ static int idtp9220_set_prop(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_REVERSE_CHG_MODE:
 		if (di->fw_update) {
+			dev_info(di->dev, "fw update going, break\n");
 			break;
 		}
 
 		if (di->hall3_online || di->hall4_online) {
 			if (di->is_reverse_mode || di->is_boost_mode) {
+				dev_info(di->dev, "reverse charge running, return\n");
 				break;
 			}
 		} else {
+			dev_info(di->dev, "pen detach, don't open reverse charge\n");
 			break;
 		}
 
@@ -5533,8 +6066,11 @@ static int idtp9220_probe(struct i2c_client *client,
 	di->chip_enable = 1;
 	di->ss = 2;
 	di->fw_update = false;
+	di->retry_num = 0;
+	di->fw_check_flag = true;
 	di->fw_version = 0;
 	di->status = NORMAL_MODE;
+	// set reverse pen soc to default
 	di->reverse_pen_soc = 255;
 	di->regmap = devm_regmap_init_i2c(client, &i2c_idtp9220_regmap_config);
 	if (!di->regmap)
@@ -5548,6 +6084,8 @@ static int idtp9220_probe(struct i2c_client *client,
 	INIT_DELAYED_WORK(&di->hall3_irq_work, idtp9220_hall3_irq_work);
 	INIT_DELAYED_WORK(&di->hall4_irq_work, idtp9220_hall4_irq_work);
 	INIT_DELAYED_WORK(&di->wpc_det_work, idtp9220_wpc_det_work);
+	INIT_DELAYED_WORK(&di->pen_notifier_work, pen_charge_notifier_work);
+	pen_notifier_work = &di->pen_notifier_work;
 	mutex_init(&di->read_lock);
 	mutex_init(&di->write_lock);
 	mutex_init(&di->wpc_det_lock);
@@ -5695,7 +6233,9 @@ static int idtp9220_probe(struct i2c_client *client,
 	if (gpio_is_valid(di->dt_props.hall3_gpio)) {
 		hall3_val = gpio_get_value(di->dt_props.hall3_gpio);
 		if (!hall3_val) {
-			schedule_delayed_work(&di->hall3_irq_work, msecs_to_jiffies(5000));
+			dev_info(di->dev, "pen online, start reverse charge\n");
+			di->hall3_online = 1;
+			schedule_delayed_work(&di->hall3_irq_work, msecs_to_jiffies(6000));
 		}
 	}
 	else
@@ -5704,7 +6244,9 @@ static int idtp9220_probe(struct i2c_client *client,
 	if (gpio_is_valid(di->dt_props.hall4_gpio)) {
 		hall4_val = gpio_get_value(di->dt_props.hall4_gpio);
 		if (!hall4_val) {
-			schedule_delayed_work(&di->hall4_irq_work, msecs_to_jiffies(5000));
+			dev_info(di->dev, "pen online, start reverse charge\n");
+			di->hall4_online = 1;
+			schedule_delayed_work(&di->hall4_irq_work, msecs_to_jiffies(6000));
 		}
 	}
 	else
@@ -5712,18 +6254,11 @@ static int idtp9220_probe(struct i2c_client *client,
 
 	dev_info(di->dev, "[idt] success probe idtp922x driver\n");
 	get_cmdline(di);
+
+#ifndef CONFIG_FACTORY_BUILD
 	if (!di->power_off_mode)
-#ifdef CONFIG_FACTORY_BUILD
-		schedule_delayed_work(&di->chg_detect_work, 3 * HZ);
-#else
-		schedule_delayed_work(&di->chg_detect_work, 8 * HZ);
+		schedule_delayed_work(&di->chg_detect_work, 5 * HZ);
 #endif
-	else {
-		dev_info(di->dev, "off-chg mode, reset chip\n");
-		idtp9220_set_enable_mode(di, false);
-		msleep(10);
-		idtp9220_set_enable_mode(di, true);
-	}
 
 	if (!idt_first_flag)
 		schedule_delayed_work(&di->idt_first_boot, msecs_to_jiffies(30000));

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2019 The Linux Foundation. All rights reserved.
- * Copyright (C) 2021 XiaoMi, Inc.
  */
 
 #define pr_fmt(fmt) "QCOM-STEPCHG: %s: " fmt, __func__
@@ -51,11 +50,11 @@ struct step_chg_info {
 	ktime_t			jeita_last_update_time;
 	bool			step_chg_enable;
 	bool			sw_jeita_enable;
+	bool			cold_step_chg_cfg_valid;
 	bool			jeita_arb_en;
 	bool			config_is_read;
 	bool			step_chg_cfg_valid;
 	bool			sw_jeita_cfg_valid;
-	bool			cold_step_chg_cfg_valid;
 	bool			soc_based_step_chg;
 	bool			ocv_based_step_chg;
 	bool			vbat_avg_based_step_chg;
@@ -78,7 +77,6 @@ struct step_chg_info {
 	struct jeita_fcc_cfg	*jeita_fcc_config;
 	struct jeita_fv_cfg	*jeita_fv_config;
 	struct cold_step_chg_cfg	*cold_step_chg_config;
-
 
 	struct votable		*fcc_votable;
 	struct votable		*fv_votable;
@@ -723,6 +721,23 @@ static int handle_step_chg_config(struct step_chg_info *chip)
 		pr_info("bms step charge fcc:%d fv:%d\n", fcc_ua, fv_uv);
 	}
 
+	/* bq27z561 get voltage max and current max */
+	if (chip->use_bq_gauge) {
+		rc = power_supply_get_property(chip->bms_psy,
+				POWER_SUPPLY_PROP_VOLTAGE_MAX, &pval);
+		if (rc >= 0 && chip->fv_votable && pval.intval > 0)
+			vote(chip->fv_votable, STEP_BMS_CHG_VOTER, true, pval.intval);
+		fv_uv = pval.intval;
+
+		rc = power_supply_get_property(chip->bms_psy,
+				POWER_SUPPLY_PROP_CURRENT_MAX, &pval);
+		if (rc >= 0 && chip->fcc_votable && pval.intval > 0)
+			vote(chip->fcc_votable, STEP_BMS_CHG_VOTER, false, pval.intval);
+		fcc_ua = pval.intval;
+
+		pr_info("bms step charge fcc:%d fv:%d\n", fcc_ua, fv_uv);
+	}
+
 update_time:
 	chip->step_last_update_time = ktime_get();
 	return 0;
@@ -789,7 +804,6 @@ static int handle_fast_charge(struct step_chg_info *chip, int temp)
 	return rc;
 }
 
-
 /* set JEITA_SUSPEND_HYST_UV to 70mV to avoid recharge frequently when jeita warm */
 #define JEITA_SUSPEND_HYST_UV		120000
 #define JEITA_HYSTERESIS_TEMP_THRED	150
@@ -834,7 +848,7 @@ static int handle_jeita(struct step_chg_info *chip)
 
 	elapsed_us = ktime_us_delta(ktime_get(), chip->jeita_last_update_time);
 	/* skip processing, event too early */
-	if (elapsed_us < STEP_CHG_HYSTERISIS_DELAY_US  && !update_now)
+	if (elapsed_us < STEP_CHG_HYSTERISIS_DELAY_US && !update_now)
 		return 0;
 
 	if (chip->jeita_fcc_config->param.use_bms)
@@ -962,9 +976,6 @@ static int handle_jeita(struct step_chg_info *chip)
 	if (!chip->usb_icl_votable)
 		goto set_jeita_fv;
 
-	pr_info("%s = %d FCC = %duA FV = %duV\n",
-		chip->jeita_fcc_config->param.prop_name, temp, fcc_ua, fv_uv);
-	pr_err("battery warm = %d battery cool = %d\n", chip->jeita_warm_th, chip->jeita_cool_th);
 	handle_fast_charge(chip, temp);
 
 	/*
@@ -973,8 +984,8 @@ static int handle_jeita(struct step_chg_info *chip)
 	 */
 	rc = power_supply_get_property(chip->batt_psy,
 				POWER_SUPPLY_PROP_VOLTAGE_MAX, &pval);
-	pr_info("%s = %d max voltage= %duv FV = %duV\n",
-		chip->jeita_fcc_config->param.prop_name, temp, pval.intval, fv_uv);
+	pr_info("%s = %d FCC = %duA FV = %duV %s = %d max voltage= %duv battery warm = %d battery cool = %d\n",
+		chip->jeita_fcc_config->param.prop_name, temp, fcc_ua, fv_uv, chip->jeita_fcc_config->param.prop_name, temp, pval.intval, chip->jeita_warm_th, chip->jeita_cool_th);
 	if (rc || (pval.intval == fv_uv)) {
 		vote(chip->usb_icl_votable, JEITA_VOTER, false, 0);
 		goto set_jeita_fv;
@@ -984,7 +995,6 @@ static int handle_jeita(struct step_chg_info *chip)
 	 * Suspend USB input path if battery voltage is above
 	 * JEITA VFLOAT threshold.
 	 */
-	/* if (chip->jeita_arb_en && fv_uv > 0) { */
 	if (fv_uv > 0) {
 		rc = power_supply_get_property(chip->batt_psy,
 				POWER_SUPPLY_PROP_VOLTAGE_NOW, &pval);

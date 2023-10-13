@@ -79,6 +79,7 @@ enum pm_state {
 #define ADAPTER_XIAOMI_PD_50W     0x0e
 #define ADAPTER_XIAOMI_PD_60W     0x0f
 #define ADAPTER_VOICE_BOX     0x0d
+#define ADAPTER_XIAOMI_PD_100W     0x10
 
 #define NORMAL_ERR			1
 #define VBAT_TOO_HIGH_ERR		2
@@ -108,7 +109,8 @@ enum pm_state {
 #define JEITA_WARM_THR			450
 #define JEITA_WARM_THR_NON_QCOM_GAUGE			480
 #define JEITA_COOL_NOT_ALLOW_CP_THR			100
-
+#define JEITA_COOL_NOT_ALLOW_CP_THR_PIPA			50
+#define JEITA_COOL_NOT_ALLOW_CP_THR_DAGU			50
 #define MAX_THERMAL_LEVEL			15
 #define JEITA_WARM_HYSTERESIS			20
 #define JEITA_COOL_HYSTERESIS			5

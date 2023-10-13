@@ -100,13 +100,17 @@ enum hvdcp3_type {
 #define MAX_THERMAL_LEVEL			10
 /* jeita related */
 #define JEITA_WARM_THR			450
-#define JEITA_COOL_NOT_ALLOW_CP_THR			100
+#define JEITA_COOL_NOT_ALLOW_CP_THR_PIPA		100
+#define JEITA_COOL_NOT_ALLOW_CP_THR_DAGU     100
+#define JEITA_COOL_NOT_ALLOW_CP_THR		100
 /*
  * add hysteresis for warm threshold to avoid flash
  * charge and normal charge switch frequently at
  * the warm threshold
  */
 #define JEITA_HYSTERESIS			20
+#define JEITA_HYSTERESIS_PIPA			21
+#define JEITA_HYSTERESIS_DAGU        21
 
 #define HIGH_CAPACITY_TRH			85
 
@@ -216,10 +220,15 @@ typedef struct {
 	int			usb_present;
 	int			ibat_now;
 	int			capacity;
+	int			bms_temp;
+	int			ibus_limits;
+	int			effective_ibus;
+	int			thermal_l;
 
 	struct bq2597x			bq2597x;
 	struct sw_charger			sw_chager;
 	struct votable		*fcc_votable;
+	struct votable		*fv_votable;
 
 	struct power_supply *fc_psy;
 	struct power_supply *sw_psy;
