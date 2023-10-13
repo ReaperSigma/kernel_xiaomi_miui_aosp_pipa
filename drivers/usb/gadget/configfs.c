@@ -18,11 +18,10 @@
 #ifdef CONFIG_USB_F_NCM
 #include "function/u_ncm.h"
 #endif
-
 #include <linux/power_supply.h>
 
 #ifdef CONFIG_USB_CONFIGFS_F_ACC
-extern int acc_ctrlrequest(struct usb_composite_dev *cdev,
+extern int acc_ctrlrequest_composite(struct usb_composite_dev *cdev,
 				const struct usb_ctrlrequest *ctrl);
 void acc_disconnect(void);
 #endif
@@ -150,8 +149,7 @@ struct gadget_config_name {
 	struct list_head list;
 };
 
-#define MAX_USB_STRING_LEN	126
-#define MAX_USB_STRING_WITH_NULL_LEN	(MAX_USB_STRING_LEN+1)
+#define USB_MAX_STRING_WITH_NULL_LEN	(USB_MAX_STRING_LEN+1)
 #define MSOS_VENDOR_TYPE 0x01
 
 static int usb_string_copy(const char *s, char **s_copy)
@@ -160,17 +158,17 @@ static int usb_string_copy(const char *s, char **s_copy)
 	char *str;
 	char *copy = *s_copy;
 	ret = strlen(s);
-	if (ret > MAX_USB_STRING_LEN)
+	if (ret > USB_MAX_STRING_LEN)
 		return -EOVERFLOW;
 
 	if (copy) {
 		str = copy;
 	} else {
-		str = kmalloc(MAX_USB_STRING_WITH_NULL_LEN, GFP_KERNEL);
+		str = kmalloc(USB_MAX_STRING_WITH_NULL_LEN, GFP_KERNEL);
 		if (!str)
 			return -ENOMEM;
 	}
-	strlcpy(str, s, MAX_USB_STRING_WITH_NULL_LEN);
+	strcpy(str, s);
 	if (str[ret - 1] == '\n')
 		str[ret - 1] = '\0';
 	*s_copy = str;
@@ -1441,7 +1439,7 @@ err_comp_cleanup:
 static int smblib_canncel_recheck(void)
 {
 	union power_supply_propval pval = {0};
-	struct power_supply     *usb_psy = NULL;
+	struct power_supply *usb_psy = NULL;
 	int rc = 0;
 
 	if (!usb_psy) {
@@ -1682,7 +1680,7 @@ static int android_setup(struct usb_gadget *gadget,
 
 #ifdef CONFIG_USB_CONFIGFS_F_ACC
 	if (value < 0)
-		value = acc_ctrlrequest(cdev, c);
+		value = acc_ctrlrequest_composite(cdev, c);
 #endif
 
 	if (value < 0)

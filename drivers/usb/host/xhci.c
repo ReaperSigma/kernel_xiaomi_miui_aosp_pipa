@@ -82,7 +82,7 @@ int xhci_handshake(void __iomem *ptr, u32 mask, u32 done, u64 timeout_us)
 }
 
 int xhci_handshake_check_state(struct xhci_hcd *xhci,
-		void __iomem *ptr, u32 mask, u32 done, int usec)
+		void __iomem *ptr, u32 mask, u32 done, u64 timeout_us)
 {
 	u32	result;
 
@@ -97,8 +97,8 @@ int xhci_handshake_check_state(struct xhci_hcd *xhci,
 		if (result == done)
 			return 0;
 		udelay(1);
-		usec--;
-	} while (usec > 0);
+		timeout_us--;
+	} while (timeout_us > 0);
 	return -ETIMEDOUT;
 }
 
@@ -176,11 +176,9 @@ int xhci_start(struct xhci_hcd *xhci)
 		xhci_err(xhci, "Host took too long to start, "
 				"waited %u microseconds.\n",
 				XHCI_MAX_HALT_USEC);
-	if (!ret) {
+	if (!ret)
 		/* clear state flags. Including dying, halted or removing */
 		xhci->xhc_state = 0;
-		xhci->run_graceperiod = jiffies + msecs_to_jiffies(500);
-	}
 
 	enable_irq(hcd->irq);
 
@@ -227,7 +225,8 @@ int xhci_reset(struct xhci_hcd *xhci, u64 timeout_us)
 	if (xhci->quirks & XHCI_INTEL_HOST)
 		udelay(1000);
 
-	ret = xhci_handshake(&xhci->op_regs->command, CMD_RESET, 0, timeout_us);
+	ret = xhci_handshake_check_state(xhci, &xhci->op_regs->command,
+			CMD_RESET, 0, timeout_us);
 	if (ret)
 		return ret;
 
@@ -1190,7 +1189,8 @@ int xhci_resume(struct xhci_hcd *xhci, bool hibernated)
 	/* re-initialize the HC on Restore Error, or Host Controller Error */
 	if (temp & (STS_SRE | STS_HCE)) {
 		reinit_xhc = true;
-		xhci_warn(xhci, "xHC error in resume, USBSTS 0x%x, Reinit\n", temp);
+		if (!xhci->broken_suspend)
+			xhci_warn(xhci, "xHC error in resume, USBSTS 0x%x, Reinit\n", temp);
 	}
 
 	if (reinit_xhc) {
@@ -3864,6 +3864,7 @@ static void xhci_free_dev(struct usb_hcd *hcd, struct usb_device *udev)
 	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
 	struct xhci_virt_device *virt_dev;
 	struct xhci_slot_ctx *slot_ctx;
+	unsigned long flags;
 	int i, ret;
 
 	/*
@@ -3893,7 +3894,11 @@ static void xhci_free_dev(struct usb_hcd *hcd, struct usb_device *udev)
 	xhci_debugfs_remove_slot(xhci, udev->slot_id);
 	virt_dev->udev = NULL;
 	xhci_disable_slot(xhci, udev->slot_id);
+
+	spin_lock_irqsave(&xhci->lock, flags);
 	xhci_free_virt_device(xhci, udev->slot_id);
+	spin_unlock_irqrestore(&xhci->lock, flags);
+
 }
 
 int xhci_disable_slot(struct xhci_hcd *xhci, u32 slot_id)

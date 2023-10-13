@@ -939,8 +939,13 @@ int dwc3_core_init(struct dwc3 *dwc)
 
 	if (!dwc->ulpi_ready) {
 		ret = dwc3_core_ulpi_init(dwc);
-		if (ret)
+		if (ret) {
+			if (ret == -ETIMEDOUT) {
+				dwc3_core_soft_reset(dwc);
+				ret = -EPROBE_DEFER;
+			}
 			goto err0;
+		}
 		dwc->ulpi_ready = true;
 	}
 
@@ -1924,7 +1929,7 @@ static int dwc3_resume(struct device *dev)
 		 * which is now out of LPM. This allows runtime_suspend later.
 		 */
 		if (dwc->current_dr_role == DWC3_GCTL_PRTCAP_HOST &&
-		    dwc->ignore_wakeup_src_in_hostmode)
+		    dwc->host_poweroff_in_pm_suspend)
 			goto runtime_set_active;
 
 		return 0;
