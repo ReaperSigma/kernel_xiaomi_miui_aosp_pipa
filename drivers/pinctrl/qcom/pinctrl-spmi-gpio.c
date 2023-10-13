@@ -14,6 +14,7 @@
 #include <linux/regmap.h>
 #include <linux/slab.h>
 #include <linux/types.h>
+#include <linux/spmi.h>
 
 #include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
 
