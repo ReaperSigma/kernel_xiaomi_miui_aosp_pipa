@@ -376,16 +376,12 @@ static void mhi_bl_dl_cb(struct mhi_device *mhi_device,
 	buf[mhi_result->bytes_xferd - 1] = 0;
 
 	pSerial_number = strstr(buf,const_serial_number);
-	if (pSerial_number != NULL) {
-		strncpy(sdx55m_cpuid, pSerial_number + strlen(const_serial_number),
-			strlen("0x3de665bd"));
-	}
+	if (pSerial_number != NULL)
+		strncpy(sdx55m_cpuid, pSerial_number + strlen(const_serial_number), strlen("0x3de665bd"));
 
 	pSerial_number = strstr(buf,const_sdx55m_fuse);
-	if (pSerial_number != NULL) {
-		strncpy(sdx55m_fuse, pSerial_number + strlen(const_sdx55m_fuse),
-			strlen("Off"));
-	}
+	if (pSerial_number != NULL)
+		strncpy(sdx55m_fuse, pSerial_number + strlen(const_sdx55m_fuse), strlen("Off"));
 
 	if (mhi_result->bytes_xferd >= MAX_MSG_SIZE) {
 		do {
@@ -827,6 +823,10 @@ int mhi_arch_link_resume(struct mhi_controller *mhi_cntrl)
 
 	if (!ret)
 		msm_pcie_l1ss_timeout_enable(pci_dev);
+
+#if defined(CONFIG_MACH_XIAOMI_ALIOTH) || defined(CONFIG_MACH_XIAOMI_THYME)
+	mhi_cntrl->force_m3_done = true;
+#endif
 
 	MHI_LOG("Exited with ret:%d\n", ret);
 
