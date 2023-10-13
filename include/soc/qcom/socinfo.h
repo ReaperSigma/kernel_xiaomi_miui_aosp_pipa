@@ -219,12 +219,6 @@ enum socinfo_parttype {
 #define early_machine_is_sdm450()	0
 #endif
 
-typedef enum {
-  CountryCN = 0,
-  CountryGlobal = 1,
-  CountryIndia = 2,
-  INVALID,
-} CountryType;
 
 
 
