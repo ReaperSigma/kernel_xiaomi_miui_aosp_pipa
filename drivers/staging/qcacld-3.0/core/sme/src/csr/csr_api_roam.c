@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2012-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -7459,7 +7460,9 @@ static void csr_roam_process_start_bss_success(struct mac_context *mac_ctx,
 	tDot11fBeaconIEs *ies_ptr = NULL;
 	tSirMacAddr bcast_mac = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
 	QDF_STATUS status;
+#ifdef FEATURE_WLAN_DIAG_SUPPORT_CSR
 	host_log_ibss_pkt_type *ibss_log;
+#endif
 #ifdef FEATURE_WLAN_MCC_TO_SCC_SWITCH
 	struct ht_profile *src_profile = NULL;
 	tCsrRoamHTProfile *dst_profile = NULL;
@@ -7563,8 +7566,8 @@ static void csr_roam_process_start_bss_success(struct mac_context *mac_ctx,
 			ibss_log->beaconInterval = (uint8_t) bi;
 		WLAN_HOST_DIAG_LOG_REPORT(ibss_log);
 	}
-#endif
 	ibss_log = NULL;
+#endif
 	/*
 	 * Only set context for non-WDS_STA. We don't even need it for
 	 * WDS_AP. But since the encryption.
@@ -8266,7 +8269,9 @@ static bool csr_roam_process_results(struct mac_context *mac_ctx, tSmeCmd *cmd,
 	struct csr_roam_profile *profile = &cmd->u.roamCmd.roamProfile;
 	eRoamCmdStatus roam_status;
 	eCsrRoamResult roam_result;
+#ifdef FEATURE_WLAN_DIAG_SUPPORT_CSR
 	host_log_ibss_pkt_type *ibss_log;
+#endif
 	struct start_bss_rsp  *start_bss_rsp = NULL;
 
 	if (!session) {
@@ -8295,8 +8300,8 @@ static bool csr_roam_process_results(struct mac_context *mac_ctx, tSmeCmd *cmd,
 			ibss_log->status = WLAN_IBSS_STATUS_FAILURE;
 			WLAN_HOST_DIAG_LOG_REPORT(ibss_log);
 		}
-#endif
 		ibss_log = NULL;
+#endif
 		start_bss_rsp = (struct start_bss_rsp *)context;
 		roam_status = eCSR_ROAM_IBSS_IND;
 		roam_result = eCSR_ROAM_RESULT_IBSS_STARTED;
@@ -8663,6 +8668,7 @@ QDF_STATUS csr_roam_copy_profile(struct mac_context *mac,
 		pDstProfile->extended_rates.numRates =
 			pSrcProfile->extended_rates.numRates;
 	}
+	pDstProfile->require_h2e = pSrcProfile->require_h2e;
 	pDstProfile->cac_duration_ms = pSrcProfile->cac_duration_ms;
 	pDstProfile->dfs_regdomain   = pSrcProfile->dfs_regdomain;
 	pDstProfile->chan_switch_hostapd_rate_enabled  =
@@ -9347,6 +9353,37 @@ QDF_STATUS csr_roam_process_disassoc_deauth(struct mac_context *mac,
 	return status;
 }
 
+static void csr_abort_connect_request_timers(
+	struct mac_context *mac, uint32_t vdev_id)
+{
+	struct scheduler_msg msg;
+	QDF_STATUS status;
+	enum QDF_OPMODE op_mode;
+	struct wlan_objmgr_vdev *vdev;
+
+	vdev = wlan_objmgr_get_vdev_by_id_from_pdev(mac->pdev,
+						    vdev_id,
+						    WLAN_LEGACY_SME_ID);
+	if (!vdev) {
+		sme_err("Vdev ref error");
+		return;
+	}
+	op_mode = wlan_vdev_mlme_get_opmode(vdev);
+	wlan_objmgr_vdev_release_ref(vdev, WLAN_LEGACY_SME_ID);
+
+	if (op_mode != QDF_STA_MODE &&
+	    op_mode != QDF_P2P_CLIENT_MODE)
+		return;
+	qdf_mem_zero(&msg, sizeof(msg));
+	msg.bodyval = vdev_id;
+	msg.type = eWNI_SME_ABORT_CONN_TIMER;
+	status = scheduler_post_message(QDF_MODULE_ID_MLME,
+					QDF_MODULE_ID_PE,
+					QDF_MODULE_ID_PE, &msg);
+	if (QDF_IS_STATUS_ERROR(status))
+		sme_debug("msg eWNI_SME_ABORT_CONN_TIMER post fail");
+}
+
 QDF_STATUS csr_roam_issue_disassociate_cmd(struct mac_context *mac,
 					uint32_t sessionId,
 					eCsrRoamDisconnectReason reason,
@@ -9368,6 +9405,8 @@ QDF_STATUS csr_roam_issue_disassociate_cmd(struct mac_context *mac,
 			csr_roam_substate_change(mac, eCSR_ROAM_SUBSTATE_NONE,
 						 sessionId);
 		}
+		csr_abort_connect_request_timers(mac, sessionId);
+
 		pCommand->command = eSmeCommandRoam;
 		pCommand->vdev_id = (uint8_t) sessionId;
 		sme_debug("Disassociate reason: %d, vdev_id: %d",
@@ -13598,16 +13637,20 @@ static QDF_STATUS csr_roam_start_wait_for_key_timer(
 {
 	QDF_STATUS status;
 	uint8_t session_id = mac->roam.WaitForKeyTimerInfo.vdev_id;
+#ifdef WLAN_DEBUG
 	tpCsrNeighborRoamControlInfo pNeighborRoamInfo =
 		&mac->roam.neighborRoamInfo[session_id];
+#endif
 
 	if (csr_neighbor_roam_is_handoff_in_progress(mac, session_id)) {
 		/* Disable heartbeat timer when hand-off is in progress */
+#ifdef WLAN_DEBUG
 		sme_debug("disabling HB timer in state: %s sub-state: %s",
 			mac_trace_get_neighbour_roam_state(
 				pNeighborRoamInfo->neighborRoamState),
 			mac_trace_getcsr_roam_sub_state(
 				mac->roam.curSubState[session_id]));
+#endif
 		mac->mlme_cfg->timeouts.heart_beat_threshold = 0;
 	}
 	sme_debug("csrScanStartWaitForKeyTimer");
@@ -14623,6 +14666,7 @@ csr_roam_get_bss_start_parms(struct mac_context *mac,
 	uint32_t opr_ch_freq = 0;
 	tSirNwType nw_type;
 	uint32_t tmp_opr_ch_freq = 0;
+	uint8_t h2e;
 	tSirMacRateSet *opr_rates = &pParam->operationalRateSet;
 	tSirMacRateSet *ext_rates = &pParam->extendedRateSet;
 
@@ -14719,6 +14763,22 @@ csr_roam_get_bss_start_parms(struct mac_context *mac,
 			break;
 		}
 		pParam->operation_chan_freq = opr_ch_freq;
+	}
+
+	if (pProfile->require_h2e) {
+		h2e = WLAN_BASIC_RATE_MASK |
+			WLAN_BSS_MEMBERSHIP_SELECTOR_SAE_H2E;
+		if (ext_rates->numRates < SIR_MAC_MAX_NUMBER_OF_RATES) {
+			ext_rates->rate[ext_rates->numRates] = h2e;
+			ext_rates->numRates++;
+			sme_debug("H2E bss membership add to ext support rate");
+		} else if (opr_rates->numRates < SIR_MAC_MAX_NUMBER_OF_RATES) {
+			opr_rates->rate[opr_rates->numRates] = h2e;
+			opr_rates->numRates++;
+			sme_debug("H2E bss membership add to support rate");
+		} else {
+			sme_err("rates full, can not add H2E bss membership");
+		}
 	}
 
 	pParam->sirNwType = nw_type;

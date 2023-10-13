@@ -2405,6 +2405,10 @@ enum qca_wlan_vendor_attr_ll_stats_results {
 	QCA_WLAN_VENDOR_ATTR_LL_STATS_IFACE_PPDU_SUCC_CNT = 81,
 	QCA_WLAN_VENDOR_ATTR_LL_STATS_IFACE_PPDU_FAIL_CNT = 82,
 
+	/* u8 value representing the time slicing duty cycle percentage.
+	 * Possible values are 0-100.
+	 */
+	QCA_WLAN_VENDOR_ATTR_LL_STATS_IFACE_INFO_TS_DUTY_CYCLE = 87,
 	/* keep last */
 	QCA_WLAN_VENDOR_ATTR_LL_STATS_AFTER_LAST,
 	QCA_WLAN_VENDOR_ATTR_LL_STATS_MAX =
@@ -3746,6 +3750,10 @@ enum qca_wlan_vendor_attr_nd_offload {
  *	%QCA_WLAN_VENDOR_ATTR_THERMAL_LEVEL and
  *	%QCA_WLAN_VENDOR_ATTR_THERMAL_COMPLETION_WINDOW attributes from
  *	userspace.
+ * @QCA_WLAN_VENDOR_FEATURE_CONCURRENT_BAND_SESSIONS: Device supports
+ *	concurrent network sessions on different Wi-Fi Bands. This feature
+ *	capability is attributed to the hardware's capability to support
+ *	the same (e.g., DBS).
  * @NUM_QCA_WLAN_VENDOR_FEATURES: Number of assigned feature bits
  */
 enum qca_wlan_vendor_features {
@@ -3761,6 +3769,7 @@ enum qca_wlan_vendor_features {
 	QCA_WLAN_VENDOR_FEATURE_11AX = 9,
 	QCA_WLAN_VENDOR_FEATURE_6GHZ_SUPPORT = 10,
 	QCA_WLAN_VENDOR_FEATURE_THERMAL_CONFIG = 11,
+	QCA_WLAN_VENDOR_FEATURE_CONCURRENT_BAND_SESSIONS = 13,
 
 	NUM_QCA_WLAN_VENDOR_FEATURES /* keep last */
 };
