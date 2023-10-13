@@ -5,7 +5,6 @@
  *               does not allow adding attributes.
  *
  * Copyright (c) 2004 Jon Smirl <jonsmirl@gmail.com>
- * Copyright (C) 2021 XiaoMi, Inc.
  * Copyright (c) 2003-2004 Greg Kroah-Hartman <greg@kroah.com>
  * Copyright (c) 2003-2004 IBM Corp.
  *
@@ -21,14 +20,12 @@
 
 #include <drm/drm_sysfs.h>
 #include <drm/drmP.h>
+#include <drm/msm_drm_pp.h>
 #include "drm_internal.h"
 #include "drm_internal_mi.h"
 
-#include <drm/msm_drm_pp.h>
-
 #define to_drm_minor(d) dev_get_drvdata(d)
 #define to_drm_connector(d) dev_get_drvdata(d)
-
 
 /**
  * DOC: overview
@@ -369,9 +366,11 @@ static ssize_t gamma_test_show(struct device *dev,
 	return ret;
 }
 
+
 extern ssize_t smart_fps_value_show(struct device *device,
 			   struct device_attribute *attr,
 			   char *buf);
+
 
 static ssize_t fod_ui_ready_show(struct device *device,
 			   struct device_attribute *attr,
@@ -430,10 +429,6 @@ static ssize_t disp_pcc_store(struct device *device,
 		&color_transform_pcc_cfg.b.b);
 
 	ret = 0;
-	pr_info("set pcc r_c=%d r_r=%d r_g=%d r_b=%d g_c=%d g_r=%d g_g=%d g_b=%d b_c=%d b_r=%d b_g=%d b_b=%d",
-		color_transform_pcc_cfg.r.c, color_transform_pcc_cfg.r.r, color_transform_pcc_cfg.r.g, color_transform_pcc_cfg.r.b,
-		color_transform_pcc_cfg.g.c, color_transform_pcc_cfg.g.r, color_transform_pcc_cfg.g.g, color_transform_pcc_cfg.g.b,
-		color_transform_pcc_cfg.b.c, color_transform_pcc_cfg.b.r, color_transform_pcc_cfg.b.g, color_transform_pcc_cfg.b.b);
 
 	return ret ? ret : count;
 }
