@@ -2,7 +2,6 @@
  * MTD Oops/Panic logger
  *
  * Copyright © 2007 Nokia Corporation. All rights reserved.
- * Copyright (C) 2021 XiaoMi, Inc.
  *
  * Author: Richard Purdie <rpurdie@openedhand.com>
  *
@@ -146,13 +145,8 @@ static int mtdoops_erase_block(struct mtdoops_context *cxt, int offset)
 static void mtdoops_inc_counter(struct mtdoops_context *cxt)
 {
 	cxt->nextpage++;
-	printk(KERN_DEBUG "mtdoops: mtdoops_inc_counter nextpage: %d,oops_pages:%d\n",
-			cxt->nextpage, cxt->oops_pages);
-	if (cxt->nextpage >= cxt->oops_pages) {
+	if (cxt->nextpage >= cxt->oops_pages)
 		cxt->nextpage = 0;
-		printk(KERN_DEBUG "mtdoops: new  nextpage: %d,oops_pages:%d\n",
-				cxt->nextpage, cxt->oops_pages);
-		}
 	cxt->nextcount++;
 	if (cxt->nextcount == 0xffffffff)
 		cxt->nextcount = 0;
@@ -328,11 +322,11 @@ static void mtdoops_add_reason(char *oops_buf, enum kmsg_dump_reason reason, enu
 	time_to_tm(now.tv_sec, 0, &ts);
 
 	if (nextpage > 0)
-		ret_len =  snprintf(str_buf, 200,
+		ret_len = snprintf(str_buf, 200,
 				"\n```\n# Index: %d\t\n## Build: %s\t\n## Reason: %s\n### %04ld-%02d-%02d %02d:%02d:%02d\n#### Log type: %s\t\n```\t\n",
 				index, UTS_VERSION, kdump_reason[reason], ts.tm_year+1900, ts.tm_mon+1, ts.tm_mday, ts.tm_hour+8, ts.tm_min, ts.tm_sec, log_type[type]);
 	else
-		ret_len =  snprintf(str_buf, 200,
+		ret_len = snprintf(str_buf, 200,
 				"\n\n# Index: %d\t\n## Build: %s\t\n## Reason: %s\n### %04ld-%02d-%02d %02d:%02d:%02d\n#### Log type: %s\t\n```\t\n",
 				index, UTS_VERSION, kdump_reason[reason], ts.tm_year+1900, ts.tm_mon+1, ts.tm_mday, ts.tm_hour+8, ts.tm_min, ts.tm_sec, log_type[type]);
 
@@ -373,7 +367,7 @@ static void mtdoops_do_dump(struct kmsg_dumper *dumper,
 	pmsg_cpy_size = record_size - (ret_len + MTDOOPS_HEADER_SIZE);
 
 	spin_lock(&pmsg_start.lock);
-	if(pmsg_start.start >= pmsg_cpy_size)
+	if (pmsg_start.start >= pmsg_cpy_size)
 		memcpy(cxt->oops_buf + (ret_len + MTDOOPS_HEADER_SIZE), pmsg_addr + (pmsg_start.start - pmsg_cpy_size), pmsg_cpy_size);
 	else {
 		pmsg_rem = pmsg_cpy_size - pmsg_start.start;
@@ -384,7 +378,7 @@ static void mtdoops_do_dump(struct kmsg_dumper *dumper,
 
 	mtdoops_add_pmsg_head(cxt->oops_buf + ret_len, MTDOOPS_TYPE_PMSG);
 
-	if (reason != KMSG_DUMP_OOPS || reason == KMSG_DUMP_PANIC || reason == KMSG_DUMP_LONG_PRESS) {
+	if (reason == KMSG_DUMP_OOPS || reason == KMSG_DUMP_PANIC) {
 		/* Panics must be written immediately */
 		mtdoops_write(cxt, 1);
 	} else {
