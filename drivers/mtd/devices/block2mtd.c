@@ -2,7 +2,6 @@
  * block2mtd.c - create an mtd from a block device
  *
  * Copyright (C) 2001,2002	Simon Evans <spse@secret.org.uk>
- * Copyright (C) 2021 XiaoMi, Inc.
  * Copyright (C) 2004-2006	Joern Engel <joern@wh.fh-wedel.de>
  *
  * Licence: GPL
@@ -50,19 +49,17 @@
 #include "../../scsi/scsi_priv.h"
 #include "../../scsi/ufs/ufshcd.h"
 
-//cmd
 #define DISK_OPEN  1000
 #define DISK_READ  1001
 #define DISK_WRITE 1002
 #define DISK_DONE  1003
 #define DISK_SYNC  1004
 
-//erro no
 #define ERR_NO_DEVICE   -1
 #define ERR_BUSY        -2
 #define ERR_PARAM       -3
 
-struct Scsi_Host *g_shost=NULL;
+struct Scsi_Host *g_shost = NULL;
 struct request *rq;
 
 /* Info for the block device */
@@ -101,7 +98,7 @@ static int _block2mtd_erase(struct block2mtd_dev *dev, loff_t to, size_t len)
 			return PTR_ERR(page);
 
 		max = page_address(page) + PAGE_SIZE;
-		for (p = page_address(page); p < max; p++)
+		for (p=page_address(page); p<max; p++)
 			if (*p != -1UL) {
 				lock_page(page);
 				memset(page_address(page), 0xff, PAGE_SIZE);
@@ -547,6 +544,7 @@ static struct block2mtd_dev *add_device(char *devname, int erase_size,
 	}
 
 	mutex_init(&dev->write_mutex);
+
 	/* Setup the MTD structure */
 	/* make the name contain the block device in */
 	name = kasprintf(GFP_KERNEL, "block2mtd: %s", devname);
