@@ -870,20 +870,6 @@ void rebuild_sched_domains(void)
 	put_online_cpus();
 }
 
-static int update_cpus_allowed(struct cpuset *cs, struct task_struct *p,
-			       const struct cpumask *new_mask)
-{
-	int ret;
-
-	if (cpumask_subset(&p->cpus_requested, cs->cpus_requested)) {
-		ret = set_cpus_allowed_ptr(p, &p->cpus_requested);
-		if (!ret)
-			return ret;
-	}
-
-	return set_cpus_allowed_ptr(p, new_mask);
-}
-
 /**
  * update_tasks_cpumask - Update the cpumasks of tasks in the cpuset.
  * @cs: the cpuset in which each task's cpus_allowed mask needs to be changed
@@ -1552,13 +1538,9 @@ static void cpuset_attach(struct cgroup_taskset *tset)
 	cgroup_taskset_first(tset, &css);
 	cs = css_cs(css);
 
+	lockdep_assert_cpus_held();     /* see cgroup_attach_lock() */
 	mutex_lock(&cpuset_mutex);
 
-	/*
-	 * It should hold cpus lock because a cpu offline event can
-	 * cause set_cpus_allowed_ptr() failed.
-	 */
-	get_online_cpus();
 	/* prepare for attach */
 	if (cs == &top_cpuset)
 		cpumask_copy(cpus_attach, cpu_possible_mask);
@@ -1577,7 +1559,6 @@ static void cpuset_attach(struct cgroup_taskset *tset)
 		cpuset_change_task_nodemask(task, &cpuset_attach_nodemask_to);
 		cpuset_update_task_spread_flag(cs, task);
 	}
-       put_online_cpus();
 
 	/*
 	 * Change mm for all threadgroup leaders. This is expensive and may
