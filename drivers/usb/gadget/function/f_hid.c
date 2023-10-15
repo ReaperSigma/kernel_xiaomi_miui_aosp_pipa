@@ -303,7 +303,7 @@ static ssize_t f_hidg_intout_read(struct file *file, char __user *buffer,
 
 	spin_lock_irqsave(&hidg->read_spinlock, flags);
 
-#define READ_COND_INTOUT (!list_empty(&hidg->completed_out_req) || !hidg->bound)
+#define READ_COND_INTOUT (!list_empty(&hidg->completed_out_req))
 
 	/* wait for at least one buffer to complete */
 	while (!READ_COND_INTOUT) {
@@ -570,13 +570,6 @@ static __poll_t f_hidg_poll(struct file *file, poll_table *wait)
 #undef WRITE_COND
 #undef READ_COND_SSREPORT
 #undef READ_COND_INTOUT
-
-static void hidg_destroy(struct kref *kref)
-{
-	struct f_hidg *hidg = container_of(kref, struct f_hidg, kref);
-
-	put_device(&hidg->dev);
-}
 
 static int f_hidg_release(struct inode *inode, struct file *fd)
 {
@@ -1294,7 +1287,7 @@ static void hidg_free(struct usb_function *f)
 
 	hidg = func_to_hidg(f);
 	opts = container_of(f->fi, struct f_hid_opts, func_inst);
-	kref_put(&hidg->kref, hidg_destroy);
+	put_device(&hidg->dev);
 	mutex_lock(&opts->lock);
 	--opts->refcnt;
 	mutex_unlock(&opts->lock);
@@ -1303,10 +1296,6 @@ static void hidg_free(struct usb_function *f)
 static void hidg_unbind(struct usb_configuration *c, struct usb_function *f)
 {
 	struct f_hidg *hidg = func_to_hidg(f);
-
-	hidg->bound = false;
-	wake_up(&hidg->read_queue);
-	wake_up(&hidg->write_queue);
 
 	cdev_device_del(&hidg->cdev, &hidg->dev);
 
