@@ -285,10 +285,8 @@ static int __ffs_ep0_queue_wait(struct ffs_data *ffs, char *data, size_t len)
 	struct usb_request *req = ffs->ep0req;
 	int ret;
 
-	if (!req) {
-		spin_unlock_irq(&ffs->ev.waitq.lock);
+	if (!req)
 		return -EINVAL;
-	}
 
 	req->zero     = len < le16_to_cpu(ffs->ev.setup.wLength);
 
@@ -2038,8 +2036,6 @@ static void functionfs_unbind(struct ffs_data *ffs)
 		ffs->ep0req = NULL;
 		ffs->gadget = NULL;
 		clear_bit(FFS_FL_BOUND, &ffs->flags);
-		ffs_log("state %d setup_state %d flag %lu gadget %pK\n",
-			ffs->state, ffs->setup_state, ffs->flags, ffs->gadget);
 		mutex_unlock(&ffs->mutex);
 		ffs_data_put(ffs);
 	}
