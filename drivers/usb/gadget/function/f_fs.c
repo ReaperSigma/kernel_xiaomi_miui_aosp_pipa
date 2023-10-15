@@ -2038,6 +2038,8 @@ static void functionfs_unbind(struct ffs_data *ffs)
 		ffs->ep0req = NULL;
 		ffs->gadget = NULL;
 		clear_bit(FFS_FL_BOUND, &ffs->flags);
+		ffs_log("state %d setup_state %d flag %lu gadget %pK\n",
+			ffs->state, ffs->setup_state, ffs->flags, ffs->gadget);
 		mutex_unlock(&ffs->mutex);
 		ffs_data_put(ffs);
 	}
@@ -3867,6 +3869,8 @@ static void ffs_func_unbind(struct usb_configuration *c,
 	func->function.ssp_descriptors = NULL;
 	func->interfaces_nums = NULL;
 
+	ffs_log("exit: state %d setup_state %d flag %lu", ffs->state,
+		ffs->setup_state, ffs->flags);
 }
 
 static struct usb_function *ffs_alloc(struct usb_function_instance *fi)
