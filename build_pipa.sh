@@ -10,8 +10,8 @@ KERNEL_ROOT_DIR=$(pwd)
 
 TARGET_ARCH="arm64"
 [[ -f "$KERNEL_ROOT_DIR/arch/$TARGET_ARCH/configs/vendor/alioth_defconfig" ]] && \
-KERNEL_CONFIG="vendor/pipa_user_defconfig" \
-|| KERNEL_CONFIG="vendor/pipa_user_defconfig"
+KERNEL_CONFIG="pipa_defconfig" \
+|| KERNEL_CONFIG="pipa_defconfig"
 ZIP_KERNEL_STR="coreLinux"
 ZIP_DEVICE_NAME="apollo"
 ZIP_PREFIX_STR="SigmaKernel-v1.0"
@@ -82,7 +82,10 @@ function miui_fix_fod() {
     sed -i 's/\/\/39 01 00 00 00 00 03 51 03 FF/39 01 00 00 00 00 03 51 03 FF/g' $dts_source/dsi-panel-j9-38-0a-0a-fhd-video.dtsi
 }
 
-
+miui_fix_dimens
+miui_fix_fps
+miui_fix_dfps
+miui_fix_fod
 
 #############################
 TOOLCHAIN="3"               #
