@@ -91,7 +91,7 @@
 #include <linux/cache.h>
 #include <linux/rodata_test.h>
 #include <linux/jump_label.h>
-
+#include <linux/random.h>
 #include <asm/io.h>
 #include <asm/setup.h>
 #include <asm/sections.h>
@@ -681,7 +681,7 @@ asmlinkage __visible void __init start_kernel(void)
 	 * - time_init() for making random_get_entropy() work on some platforms
 	 * - random_init() to initialize the RNG from from early entropy sources
 	 */
-	random_init(command_line);
+	rand_initialize();
 	boot_init_stack_canary();
 
 	perf_event_init();

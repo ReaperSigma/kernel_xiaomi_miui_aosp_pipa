@@ -1212,6 +1212,7 @@ int __init early_init_dt_scan_chosen(unsigned long node, const char *uname,
 	int l;
 	const char *p;
 	const void *rng_seed;
+	char *cmdline = data;
 
 	pr_debug("search \"chosen\", depth: %d, uname: %s\n", depth, uname);
 

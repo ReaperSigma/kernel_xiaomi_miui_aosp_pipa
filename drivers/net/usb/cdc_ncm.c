@@ -887,7 +887,7 @@ int cdc_ncm_bind_common(struct usbnet *dev, struct usb_interface *intf, u8 data_
 	 * Let's check if this is the case, and set the device to NDP16 mode again if
 	 * needed.
 	*/
-	if (ctx->drvflags & CDC_NCM_FLAG_RESET_NTB16) {
+	if (ctx->drvflags & CDC_NCM_FLAG_PREFER_NTB32) {
 		err = usbnet_read_cmd(dev, USB_CDC_GET_NTB_FORMAT,
 				      USB_TYPE_CLASS | USB_DIR_IN | USB_RECIP_INTERFACE,
 				      0, iface_no, &curr_ntb_format, 2);

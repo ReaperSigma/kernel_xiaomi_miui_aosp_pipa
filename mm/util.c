@@ -301,7 +301,7 @@ int vma_is_stack_for_current(struct vm_area_struct *vma)
  * Return: A page aligned address within [start, start + range).  On error,
  * @start is returned.
  */
-unsigned long randomize_page(unsigned long start, unsigned long range)
+/*unsigned long randomize_page(unsigned long start, unsigned long range)
 {
 	if (!PAGE_ALIGNED(start)) {
 		range -= PAGE_ALIGN(start) - start;
@@ -317,7 +317,7 @@ unsigned long randomize_page(unsigned long start, unsigned long range)
 		return start;
 
 	return start + (get_random_long() % range << PAGE_SHIFT);
-}
+}*/
 
 #if defined(CONFIG_MMU) && !defined(HAVE_ARCH_PICK_MMAP_LAYOUT)
 void arch_pick_mmap_layout(struct mm_struct *mm, struct rlimit *rlim_stack)
