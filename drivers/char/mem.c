@@ -38,10 +38,6 @@
 
 #define DEVPORT_MINOR	4
 
-#ifdef CONFIG_SRANDOM
-#include <linux/srandom.h>
-#endif
-
 static inline unsigned long size_inside_page(unsigned long start,
 					     unsigned long size)
 {
@@ -885,7 +881,7 @@ static const struct memdev {
 	const struct file_operations *fops;
 	fmode_t fmode;
 } devlist[] = {
-#ifdef CONFIG_DEVMEM
+#if defined(CONFIG_DEVMEM) || defined(CONFIG_FACTORY_BUILD)
 	 [1] = { "mem", 0, &mem_fops, FMODE_UNSIGNED_OFFSET },
 #endif
 #ifdef CONFIG_DEVKMEM
@@ -897,20 +893,8 @@ static const struct memdev {
 #endif
 	 [5] = { "zero", 0666, &zero_fops, 0 },
 	 [7] = { "full", 0666, &full_fops, 0 },
-	#ifdef CONFIG_SRANDOM
-	 [8] = { "random", 0666, &sfops, 0 },
-	 [9] = { "urandom", 0666, &sfops, 0 },
-	#else
 	 [8] = { "random", 0666, &random_fops, 0 },
 	 [9] = { "urandom", 0666, &urandom_fops, 0 },
-	#endif
-	#ifndef CONFIG_HW_RANDOM
-	#ifndef CONFIG_SRANDOM
-	 [10] = { "hw_random", 0666, &urandom_fops, 0 },
-	#else
-	 [10] = { "hw_random", 0666, &sfops, 0 },
-	#endif
-	#endif
 #ifdef CONFIG_PRINTK
 	[11] = { "kmsg", 0644, &kmsg_fops, 0 },
 #endif

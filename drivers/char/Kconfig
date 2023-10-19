@@ -51,21 +51,6 @@ config SGI_MBCS
 source "drivers/tty/serial/Kconfig"
 source "drivers/tty/serdev/Kconfig"
 
-config SRANDOM
-	tristate "Seed PRNG to replace urandom"
-	default n
-	---help---
-	  If you say Y here, The kernel support for
-	  Seed PRNG will be enabled.
-
-	  This driver will improve built-in random number generators
-	  useful for faster RNG to wipe SSDs.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called srandom.
-
-	  If unsure, say N.
-
 config TTY_PRINTK
 	tristate "TTY driver to output user messages via printk"
 	depends on EXPERT && TTY
@@ -623,6 +608,11 @@ config ADI
 	  and SSM (Silicon Secured Memory).  Intended consumers of this
 	  driver include crash and makedumpfile.
 
+config XLOGCHAR
+	tristate "xlogchar driver"
+	help
+	  Implements a high performance log driver
+          
 config RB5_FAN_CONTROLLER
 	tristate "RB5 fan controller driver support"
 	help
@@ -639,13 +629,7 @@ config RB5_GPIOS_ENABLE
 	  signals, GPIO 60 is default set to low to connect GPIOs
 	  140/145,116/117 to mezzanine connectors.
 
-config XLOGCHAR
-	tristate "xlogchar driver"
-	help
-	  Implements a high performance log driver
 endmenu
-
-source "drivers/char/lrng/Kconfig"
 
 config RANDOM_TRUST_CPU
 	bool "Trust the CPU manufacturer to initialize Linux's CRNG"
