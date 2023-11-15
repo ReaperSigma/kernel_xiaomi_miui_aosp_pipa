@@ -1441,7 +1441,7 @@ next_step:
 		if (phase == 3) {
 			inode = f2fs_iget(sb, dni.ino);
 			if (IS_ERR(inode) || is_bad_inode(inode) ||
-					special_file(inode->i_mode))
+					special_file(inode->i_mode)){
 				continue;
 			}
 
@@ -1488,8 +1488,6 @@ next_step:
 			int err;
 
 			if (S_ISREG(inode->i_mode)) {
-				if (!f2fs_down_write_trylock(&fi->i_gc_rwsem[READ]))
-					continue;
 				if (!f2fs_down_write_trylock(
 						&fi->i_gc_rwsem[WRITE])) {
 					sbi->skipped_gc_rwsem++;
